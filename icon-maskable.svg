@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Maskable icon: keep all art inside the inner ~80% safe zone. -->
+  <rect width="512" height="512" fill="#0e0f12"/>
+  <circle cx="256" cy="256" r="120" fill="none" stroke="#ffcc33" stroke-width="12"/>
+  <circle cx="256" cy="256" r="16" fill="#ffcc33"/>
+  <text x="256" y="356" text-anchor="middle"
+        font-family="Helvetica, Arial, sans-serif" font-weight="700" font-size="48"
+        fill="#ffcc33">KZ</text>
+</svg>
