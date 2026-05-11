@@ -455,6 +455,35 @@ function stripHtml(s) {
   return (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
 }
 
+function parseShowPage(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  let image = null;
+  let description = null;
+
+  // Show-specific image from JSON-LD thumbnailUrl
+  for (const script of doc.querySelectorAll('script[type="application/ld+json"]')) {
+    try {
+      const data = JSON.parse(script.textContent);
+      const graph = data["@graph"] || (Array.isArray(data) ? data : [data]);
+      for (const node of graph) {
+        if (node["@type"] === "CollectionPage" && node.thumbnailUrl) {
+          image = node.thumbnailUrl;
+          break;
+        }
+      }
+    } catch {}
+    if (image) break;
+  }
+
+  // Show description from <div class='show-desc'><p>
+  const descEl = doc.querySelector(".show-desc p");
+  if (descEl) {
+    description = descEl.textContent.replace(/\s+/g, " ").trim() || null;
+  }
+
+  return { image, description };
+}
+
 function parseShowFilter(html) {
   const doc = new DOMParser().parseFromString(html, "text/html");
   const sel = doc.querySelector('select[name="showsfilter"]');
@@ -570,13 +599,20 @@ async function fetchShow(slug) {
     }
     if (!all.length) throw new Error("no episodes found in feed");
 
+    // Fetch show HTML page for the real show-specific image and description
+    let pageImage = null, pageDescription = null;
+    try {
+      const pageHtml = await (await fetchViaProxy(`${BASE}/shows/${slug}/`)).text();
+      ({ image: pageImage, description: pageDescription } = parseShowPage(pageHtml));
+    } catch {}
+
     ls.set(STORE.epPrefix + slug, all);
     const myShows = {
       ...state.myShows,
       [slug]: {
         name: channelTitle || state.myShows[slug]?.name || slug,
-        image: channelImage || state.myShows[slug]?.image || null,
-        description: channelDescription || state.myShows[slug]?.description || null,
+        image: pageImage || state.myShows[slug]?.image || null,
+        description: pageDescription || state.myShows[slug]?.description || null,
         episodeCount: all.length,
         lastFetched: Date.now(),
       },
