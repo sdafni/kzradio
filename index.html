@@ -119,10 +119,20 @@
     box-shadow: 0 8px 24px rgba(0,0,0,.35);
   }
   .combobox .dropdown li {
-    padding: 10px 12px;
+    padding: 8px 12px;
     cursor: pointer;
     border-bottom: 1px solid var(--border);
-    display: flex; align-items: baseline; gap: 8px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .combobox .dropdown li .avatar {
+    width: 32px; height: 32px;
+    border-radius: 6px;
+    object-fit: cover;
+    background: #000;
+    flex-shrink: 0;
+  }
+  .combobox .dropdown li .avatar.ph {
+    background: var(--panel-3);
   }
   .combobox .dropdown li:last-child { border-bottom: none; }
   .combobox .dropdown li.active,
@@ -145,6 +155,47 @@
   }
   .combobox .dropdown li.empty { color: var(--muted); cursor: default; }
   .combobox .dropdown li.empty:hover { background: var(--panel-2); }
+
+  /* info icon — small "i" badge that shows description via native tooltip
+     in dropdowns (avoids overflow clipping) and a styled tooltip in panels. */
+  .info-icon {
+    position: relative;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--panel-3);
+    color: var(--muted);
+    font-size: 12px; font-weight: 700; font-style: italic;
+    border: 1px solid var(--border);
+    cursor: help;
+    flex-shrink: 0;
+    user-select: none;
+    line-height: 1;
+  }
+  .info-icon:hover, .info-icon:focus { color: var(--accent); border-color: var(--accent); outline: none; }
+  .info-icon .tip {
+    position: absolute;
+    top: calc(100% + 6px);
+    inset-inline-end: 0;
+    background: var(--panel-3);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.45;
+    font-weight: 400; font-style: normal;
+    width: max-content;
+    max-width: min(320px, 80vw);
+    white-space: normal;
+    z-index: 100;
+    display: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,.5);
+    text-align: start;
+    pointer-events: none;
+  }
+  .info-icon:hover .tip,
+  .info-icon:focus .tip { display: block; }
 
   /* === selected === */
   .selected {
@@ -170,8 +221,12 @@
   .selected .meta { flex: 1; min-width: 0; }
   .selected .meta .title {
     font-weight: 600; font-size: 15px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .selected .meta .title .title-text {
     overflow: hidden; text-overflow: ellipsis;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    min-width: 0; flex: 1;
   }
   .selected .meta .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
   .selected .meta .sub a { color: inherit; }
@@ -364,6 +419,13 @@ function parseRss(xmlText) {
     const it = channel.getElementsByTagNameNS("http://www.itunes.com/dtds/podcast-1.0.dtd", "image")[0];
     if (it) channelImage = it.getAttribute("href") || "";
   }
+  // Channel description — may be CDATA-wrapped HTML; strip tags
+  let channelDescription = channel.querySelector(":scope > description")?.textContent?.trim() || "";
+  if (!channelDescription) {
+    const itSum = channel.getElementsByTagNameNS("http://www.itunes.com/dtds/podcast-1.0.dtd", "summary")[0];
+    if (itSum) channelDescription = (itSum.textContent || "").trim();
+  }
+  channelDescription = stripHtml(channelDescription);
   const items = [];
   for (const it of channel.querySelectorAll(":scope > item")) {
     const title = it.querySelector(":scope > title")?.textContent?.trim() || "";
@@ -383,7 +445,14 @@ function parseRss(xmlText) {
     if (m) id = parseInt(m[1], 10);
     items.push({ id, title, date, permalink: link || guid, mp3, image });
   }
-  return { channelTitle, channelImage, items };
+  return { channelTitle, channelImage, channelDescription, items };
+}
+
+function stripHtml(s) {
+  if (!s) return "";
+  const tmp = document.createElement("div");
+  tmp.innerHTML = s;
+  return (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
 }
 
 function parseShowFilter(html) {
@@ -476,7 +545,7 @@ async function fetchShow(slug) {
   try {
     const baseFeed = `${BASE}/shows/${slug}/feed/`;
     const all = []; const seen = new Set();
-    let channelTitle = ""; let channelImage = "";
+    let channelTitle = ""; let channelImage = ""; let channelDescription = "";
     for (let page = 1; page <= 200; page++) {
       const u = page === 1 ? baseFeed : `${baseFeed}?paged=${page}`;
       let xml;
@@ -487,6 +556,7 @@ async function fetchShow(slug) {
       catch (e) { if (page > 1) break; throw e; }
       if (!channelTitle) channelTitle = parsed.channelTitle;
       if (!channelImage) channelImage = parsed.channelImage;
+      if (!channelDescription) channelDescription = parsed.channelDescription;
       if (!parsed.items.length) break;
       let added = 0;
       for (const it of parsed.items) {
@@ -506,6 +576,7 @@ async function fetchShow(slug) {
       [slug]: {
         name: channelTitle || state.myShows[slug]?.name || slug,
         image: channelImage || state.myShows[slug]?.image || null,
+        description: channelDescription || state.myShows[slug]?.description || null,
         episodeCount: all.length,
         lastFetched: Date.now(),
       },
@@ -645,14 +716,27 @@ function stepEpisode(delta) {
 
 function getCombinedShows() {
   // Catalog ∪ My Shows. Catalog is the source of truth for names/slugs;
-  // myShows adds episodeCount and ensures shows the user has added are
-  // visible even if catalog isn't loaded yet.
-  const byName = new Map();    // name -> { slug, name }
+  // myShows adds episodeCount, image, description and ensures shows the user
+  // has added are visible even if catalog isn't loaded yet.
+  const byName = new Map();    // name -> { slug, name, image, description }
   if (Array.isArray(state.catalog)) {
-    for (const s of state.catalog) byName.set(s.name, { slug: s.slug, name: s.name });
+    for (const s of state.catalog) {
+      byName.set(s.name, { slug: s.slug, name: s.name, image: null, description: null });
+    }
   }
   for (const [slug, meta] of Object.entries(state.myShows)) {
-    if (!byName.has(meta.name)) byName.set(meta.name, { slug, name: meta.name });
+    const existing = byName.get(meta.name);
+    if (existing) {
+      existing.slug = slug;
+      existing.image = meta.image || existing.image;
+      existing.description = meta.description || existing.description;
+    } else {
+      byName.set(meta.name, {
+        slug, name: meta.name,
+        image: meta.image || null,
+        description: meta.description || null,
+      });
+    }
   }
   return Array.from(byName.values());
 }
@@ -684,6 +768,22 @@ function filteredEpisodes(slug) {
   if (q) list = list.filter(e => (e.title || "").toLowerCase().includes(q));
   if (state.epFavOnly) list = list.filter(e => !!state.favEps[e.permalink]);
   list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  return list;
+}
+
+// All cached episodes for a slug (or across all shows when slug is null),
+// ignoring the favorites filter and search query. Used for the "🎲 Random"
+// buttons so picking random truly samples from everything — not just the
+// currently-filtered subset.
+function allEpisodes(slug) {
+  if (slug) {
+    return (state.episodes[slug] || []).map(e => ({ ...e, _slug: slug }));
+  }
+  const list = [];
+  for (const [s, eps] of Object.entries(state.episodes)) {
+    if (!Array.isArray(eps)) continue;
+    for (const e of eps) list.push({ ...e, _slug: s });
+  }
   return list;
 }
 
@@ -823,11 +923,20 @@ function renderShowDropdown() {
     const added = !!state.myShows[s.slug];
     const fav = !!state.favShows[s.slug];
     const epCount = state.myShows[s.slug]?.episodeCount;
+    const img = s.image || state.myShows[s.slug]?.image;
+    const desc = s.description || state.myShows[s.slug]?.description;
     li.innerHTML = `
+      ${img
+        ? `<img class="avatar" src="${escapeAttr(img)}" alt="" loading="lazy" />`
+        : `<span class="avatar ph"></span>`}
       <span class="label">${fav ? "★ " : ""}${highlight(s.name, q)}</span>
       ${added ? `<span class="meta">${epCount ?? "—"} eps</span>` : `<span class="pill">+ add</span>`}
+      ${desc ? `<span class="info-icon" title="${escapeAttr(desc)}" aria-label="Show description">i</span>` : ""}
     `;
     li.addEventListener("mousedown", e => e.preventDefault());
+    // clicking the info icon should NOT select the show
+    li.querySelector(".info-icon")?.addEventListener("click", e => e.stopPropagation());
+    li.querySelector(".info-icon")?.addEventListener("mousedown", e => e.stopPropagation());
     li.addEventListener("click", () => selectShow(s.slug));
     ul.appendChild(li);
   }
@@ -868,6 +977,7 @@ function renderShowSelected() {
   const catMeta = state.catalog?.find(s => s.slug === slug);
   const name  = myMeta?.name || catMeta?.name || slug;
   const image = myMeta?.image;
+  const description = myMeta?.description;
   const fav = !!state.favShows[slug];
 
   // body: show details + status
@@ -888,7 +998,10 @@ function renderShowSelected() {
     <div class="row1">
       ${image ? `<img src="${escapeAttr(image)}" alt="" />` : ""}
       <div class="meta">
-        <div class="title">${escapeHtml(name)}</div>
+        <div class="title">
+          <span class="title-text">${escapeHtml(name)}</span>
+          ${description ? `<span class="info-icon" tabindex="0" aria-label="Show description" title="${escapeAttr(description)}">i<span class="tip">${escapeHtml(description)}</span></span>` : ""}
+        </div>
         <div class="sub">${sub}</div>
       </div>
       <button class="clear-x" id="showClearBtn" title="Clear selection (browse all episodes)" aria-label="Clear show">✕</button>
@@ -910,7 +1023,9 @@ function renderShowSelected() {
     removeShow(slug);
   });
   div.querySelector("#randomEpBtn")?.addEventListener("click", () => {
-    const eps = filteredEpisodes(slug);
+    // Random must sample across ALL cached episodes for this show,
+    // not the currently-filtered list (which may be favorites-only).
+    const eps = allEpisodes(slug);
     if (!eps.length) return;
     const pick = eps[Math.floor(Math.random() * eps.length)];
     selectEpisode(pick.permalink, { play: true });
@@ -981,12 +1096,21 @@ function renderEpDropdown() {
     if (i === state.epActive) li.classList.add("active");
     const fav = !!state.favEps[ep.permalink];
     const datePrefix = ep.date ? `${ep.date} · ` : "";
-    const showName = showAcross ? (state.myShows[ep._slug]?.name || ep._slug) : "";
+    const showMeta = state.myShows[ep._slug];
+    const showName = showAcross ? (showMeta?.name || ep._slug) : "";
+    const img = ep.image || showMeta?.image;
+    const desc = showMeta?.description;
     li.innerHTML = `
+      ${img
+        ? `<img class="avatar" src="${escapeAttr(img)}" alt="" loading="lazy" />`
+        : `<span class="avatar ph"></span>`}
       <span class="label">${fav ? "★ " : ""}${highlight(datePrefix + (ep.title || "(untitled)"), q)}</span>
       ${showAcross ? `<span class="meta">${escapeHtml(showName)}</span>` : ""}
+      ${desc ? `<span class="info-icon" title="${escapeAttr(desc)}" aria-label="Show description">i</span>` : ""}
     `;
     li.addEventListener("mousedown", e => e.preventDefault());
+    li.querySelector(".info-icon")?.addEventListener("click", e => e.stopPropagation());
+    li.querySelector(".info-icon")?.addEventListener("mousedown", e => e.stopPropagation());
     li.addEventListener("click", () => selectEpisode(ep.permalink));
     ul.appendChild(li);
   }
@@ -1032,7 +1156,9 @@ function renderEpSelected() {
       div.innerHTML = `No episodes cached. Pick a show first.`;
     }
     div.querySelector("#randomEpBtn2")?.addEventListener("click", () => {
-      const list = filteredEpisodes(slug);
+      // Use all cached episodes (not the filtered subset) so toggling the
+      // favorites filter doesn't make "random" pick only from favorites.
+      const list = allEpisodes(slug);
       if (!list.length) return;
       const pick = list[Math.floor(Math.random() * list.length)];
       selectEpisode(pick.permalink, { play: true });
@@ -1058,11 +1184,15 @@ function renderEpSelected() {
     ? `<a href="#" id="jumpToShowLink">${escapeHtml(showLabel)}</a>`
     : escapeHtml(showLabel);
 
+  const epShowDesc = showMeta?.description;
   div.innerHTML = `
     <div class="row1">
       ${img ? `<img src="${escapeAttr(img)}" alt="" />` : ""}
       <div class="meta">
-        <div class="title">${escapeHtml(ep.title || "(untitled)")}</div>
+        <div class="title">
+          <span class="title-text">${escapeHtml(ep.title || "(untitled)")}</span>
+          ${epShowDesc ? `<span class="info-icon" tabindex="0" aria-label="Show description" title="${escapeAttr(epShowDesc)}">i<span class="tip">${escapeHtml(epShowDesc)}</span></span>` : ""}
+        </div>
         <div class="sub">${escapeHtml(ep.date || "")}${ep.date ? " · " : ""}${showLink}
           · <a href="${ep.permalink}" target="_blank" rel="noopener">↗</a>
         </div>
