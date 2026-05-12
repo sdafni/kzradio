@@ -84,6 +84,18 @@
   section.selector header .filter-btn:disabled {
     opacity: 0.4; cursor: not-allowed;
   }
+  .mode-tabs { display: flex; gap: 4px; margin-inline-end: auto; }
+  .mode-tab {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 99px;
+    padding: 4px 12px;
+    font: inherit; font-size: 12px;
+    min-height: 28px;
+    cursor: pointer;
+  }
+  .mode-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
 
   /* === combobox === */
   .combobox { position: relative; }
@@ -284,17 +296,26 @@
     <span class="status" id="status"></span>
   </header>
 
-  <!-- Element 1: Show selector -->
+  <!-- Element 1: Show/Tag selector -->
   <section class="selector" id="showSection">
     <header>
-      <h2>תוכנית · Show</h2>
+      <div class="mode-tabs">
+        <button type="button" class="mode-tab active" id="modeShowBtn">Show</button>
+        <button type="button" class="mode-tab" id="modeTagBtn">Tag</button>
+      </div>
       <button type="button" class="filter-btn" id="showFavBtn" title="Show favorited shows only">★ favorites</button>
     </header>
-    <div class="combobox" data-which="show">
+    <div class="combobox" id="showModeBox" data-which="show">
       <input id="showInput" type="search" autocomplete="off"
              placeholder="חיפוש תוכניות / Search…  (or paste a kzradio show URL)" />
       <span class="chev">▾</span>
       <ul class="dropdown" id="showDropdown" hidden></ul>
+    </div>
+    <div class="combobox" id="tagModeBox" data-which="tag" hidden>
+      <input id="tagInput" type="search" autocomplete="off"
+             placeholder="Search 4911 tags… (e.g. progressive-rock, ambient)" />
+      <span class="chev">▾</span>
+      <ul class="dropdown" id="tagDropdown" hidden></ul>
     </div>
     <div class="selected" id="showSelected"></div>
   </section>
@@ -323,6 +344,500 @@
 // =========================================================================
 
 const BASE = "https://www.kzradio.net";
+const ALL_TAGS = [
+  "00s","100","100-gecs","100th-show","11street_sound","1900","1962","1963","1964","1965",
+  "1967","1970","1971","1972","1973","1974","1975","1976","1977","1978",
+  "1979","1980","1981","1983","1984","1985","1987","1988","1989","1990",
+  "1991","1992","1993","1994","1995","1996","1997","1999","2000","2001",
+  "2002","2003","2004","2005","2006","2007","2008","2010","2011","2012",
+  "2014","2016","2017","2018","2019","2020","2021","2022","2023","2024",
+  "2025","30-somehing","4ad","60s","611shapeless","666","7-באוקטובר","700-bliss","70s","8-ביט",
+  "80","80s","80s-alternative","80s-pop","90s","a-a-williams","a-complete-unknown","a-ghost-is-born","a-little-acid","a-m",
+  "a-strangely-isolated-place","a-tribe-called-quest","abbey-road","abortion-rights","abortions","above","abstract","abstract-hip-hop","ac-dc","acid",
+  "acid-boys","acid-folk","acid-house","acid-jazz","acostic","acoustic","adam-and-the-ants","adam-ant","adam-curtis","adam-pits",
+  "adir-o","adrian-quesada","adrian-younge","adrianne-lenker","adventure","ady-toledano","aerosmith","aeviterne","africa","afro",
+  "afro_b","afrobeat","afrobeats","afroragga","after-the-gold-rush","agar-agar","agat","aidonia","aili","aimee-mann",
+  "aint-no-lady","air","alabaster-deplume","albert-ayler","albertine-sarges","alchemist","aldous-harding","aleksandir","aleksi-perala","alex-g",
+  "alexisonfire","alfie-templeman","alfos","alice-boman","alice-in-chains","alina-bzhezhinska","all-them-witches","all-traps-on-earth","alla-pugacheva","allegaeon",
+  "allman-brothers","almost-killed-me","alpha-blondy","alpha_blondy","alphaville","alt-country","alternative","alternative-dance","alternative-hip-hop","alternative-pop",
+  "alternative-rb","alternative-rock","altin-gun","alton-ellis","alvvays","amaarae","amanda-shires","amapiano","amar","amar_sound",
+  "ambient","ambient-jazz","american-recordings","americana","amorica","amphibians","amy-winehouse","analepsy","anchorsong","and-so-i-watch-you-from-afar",
+  "anderson-paak","andreas-kunzmann","andrew-w-k","andrew-weatherall","andy-bell","andy-shauf","angata","angel-dut","angel-olsen","angelo-badalamenti",
+  "angelo-de-augustine","angine-de-poitrine","anglagard","angola","ani-difranco","anika","anima","animal-collective","anita-lane","anna-b-savage",
+  "anna-von-hausswolff","anohni","another-side-of-bob-dylan","another-sky","anthrax","anti-fascist","anticon","any","aphex-twin","apparat",
+  "apple","arab","arab-rap","arab-strap","arabic","arabrot","archil-leon","arctic-monkeys","argov","ariel-zetina",
+  "arlo-parks","armand-hammer","arooj-aftab","art-pop","art-rock","art-school-girlfriend","artic_monkeys","asake","ask-carol","astro-choleras",
+  "astronoid","asunojokei","at-dawn","au-suisse","audiovisual","auntie-flo","aurora","austin-ato","australia","autarkic",
+  "automatic-for-the-people","automn-is-coming","autonoesis","autumn","avant-gard","avant-pop","avantgarde","avishai-cohen","awe-kid","axel-boman",
+  "axum","ayala","b-sides","baby-keem","baby-satan","bach","back-street-crawler","bad-bunny","baggy","balearic",
+  "ballads","band","bangers","banton","bar_alfandari","barati","barbie","barbie-bertisch","baroque-pop","barry-adamson",
+  "bass","bat-fangs","batshitcrazies","battleships","bbe","be-your-own-pet","beach-house","beachwood-sparks","beastie-boys","beat",
+  "beatfoot","beatfoot-2","beatles","beats","beaumont","beauty","beck","bedouine","bedroom-house","bedroom-pop",
+  "beirut","ben-aylon","ben-golan","bend-sinister","benedik-giske","benja","benjamin-esterlis","berlin","best-of-2020","best-of-2021",
+  "best-of-2022","beth-gibbons","beyonce","bibio","big-hits","big-joanie","big-links","big-star","big-thief","big_links",
+  "bikini-kill","bill-fay","bill-laurance","bill-murray","bill-withers","billie-eilish","billy-bragg","billy-gibbons","billy-joel","billy-woods",
+  "binder-dundat","birds-in-row","birds-ov-paradise","birthday-party","bitter-sweet","bj-barham","bjork","bjork-2","black-coffee","black-country-new-road",
+  "black-holes","black-midi","black-sabbath","black-thought","black_sherif","blackalicious","blackman","bleep","bless-and-mercy","bless__mercy",
+  "blind-faith","blonde-redhead","blood","blood-command","blood-on-the-tracks","blood-williams","bloodywood","blue","blue-gene-tyranny","blue-mountains",
+  "blue-states","blue_devil","blues","blues-rock","bluesrock","blur","blut-aus-nord","bnny","bob","bob-dylan",
+  "bob-marley","bob-moses","bob-weir","bob_marley","bobby-oroza","bodega","bohemian-rhapsody","bombay-bicycle-club","bonny-light-horseman","bonobo",
+  "boogie","bootleg-series","boris","borito","born-in-the-usa","born-to-run","bosa","bossa-nova","bouncing-beats","bounty_killa",
+  "bounty_killer","bouyon","box-set","boygenius","bpm","brad-mehldau","brain-de-palma","braindance","brandi-carlile","breakbeat",
+  "breakcore","breaks","brian-wilson","bridge-over-troubled-water","bright-eyes","bring-them-home","bringing-it-all-back-home","bristol","brit-funk","brittany-howard",
+  "broadcast","broken","broken-beats","broken-bells","bruce-springsteen","bruno-bavota","brutus","bss","buddy-guy","buddy-holly",
+  "built-to-spill","burial","burna_boy","burner","burt-bacharach","burton-badman","buttering-trio","butthole-surfers","buzzcocks","byron-the-aquarius",
+  "bzaat","c-duncan","c-m-toni","cafe-del-mar","calexico","calm-the-beast","calypso","camel","can","canada",
+  "candy","candy-kingdom-synth-orchestra","cape-monze-records","captain-beefheart","cardiacs","carib","caribbean","caribbeat","carl-jung","carla-dal-forno",
+  "carmen-villain","carnival","carole-king","caroline-polachek","carsten-jost","carter-the-unstoppable-sex-machine","cassius","cat-power","cate-le-bon","caterina-barbieri",
+  "cativo","cats","cattivo","cave-in","ccr","cecile-mclorin-salvant","celeste","centro-matic","ceremonial","cesaria-evora",
+  "cevin-key","chai","chantal-acda","chaos","charli-xcx","charlie-megira","charlotte-adigery-bolis-pupul","charlotte-day-wilson","che-noir","checkpoint-303",
+  "cheekface","chelsea-wolfe","cherry-coloured","cheval-sombre","chicago","chick-corea","chike","chill","chill-out","chill-pill",
+  "chillout","chilly-gonzales","china","chisenga","chocolate-and-cheese","choir","choral","chris-robinson-brotherhood","chris-stamey","chris-stapleton",
+  "chrissie-hynde","christine-mcvie","christmas","christoph-el-truento","chromeo","chronic-law","chronic-town","chubby-and-the-gang","chutney_soca","chvrches",
+  "cinematic","circus-des-yeux","clairo","clairvoiance","clannad","claremont-56","classic","classic-r-and-b","classic-techno","classic-trance",
+  "classical","clinic","cloakroom","cloud-nothings","cloud-of-i","cloudact","club","club-trance","coccorosie","cocoa-tea",
+  "cocoa_tea","cohen","cold-wave","colleen","colors","colourful","comeback-kid","compilation-albums","compost-records","congo-natty",
+  "conor-oberst","contemplative","converge","converge-chelsea-wolfe","cool-ghouls","coolio","cor-ece","corduroy","corp","cory-hanson",
+  "cosmic-americana","cosmic-disco","cosmic-jazz","cosmic-music","country","court-and-spark","courtney-barnett","covers","crackberry","craig-finn",
+  "crammed-discs","cranes","crass","crayon","crazy-machines","cream","critical-defiance","cross-purposes","crowbar","crowded-house",
+  "crows","cruel-wonders","csny","cucumbers","cuddling","cult-of-luna","culture-club","cure","curses","curtis-mayfield",
+  "cymande","cyndi-lauper","d-fine-us","daft-punk","dais-records","dalum","dam-funk","damn-the-torpedoes","damon-albarn","dan-auerbach",
+  "dan-deacon","dana-dentata","dance","dance-pop","dance-punk","dance-set","dance-to-fight","dancefloor","dancehall","dancheall",
+  "dangelo","danger-mouse","daniel-knox","danny-polaris","danny-tenaglia","danny-whitten","danzig","dark","dark-ambient","dark-entries",
+  "dark-jazz","dark-meditation","dark-side","darkness","darkwave","dasco","dashboard-confessional","daufodt","daughter","david-bowie",
+  "david-byrne","david-crosby","david-johansen","david-lindley","david-lynch","david-m-allen","david-roback","david-sylvian","david-thomas","davin-varda",
+  "dawes","dawn-richard-and-spencer-zahn","day-tripping","daydream-nation","daydreaming","dc-salas","de-la-soul","dead-cross","dead-rabbits","deadwood",
+  "deaf-chonky","deafheaven","dear-boy","death","death-in-vegas","deathmetal","deathsiege","deca","decha","deconstructed-club",
+  "decoration-day","deep-aztec","deep-cuts","deep-house","deftons","delfonic","deltron-3030","dennis-bovell","dennis-brown","depeche-mode",
+  "derek-trucks-band","desaparecidos","desert","desert-blues","desire","detroit","deux-control","devils-dust","devin-townsend","devin-townsend-project",
+  "dexta_daps","di_genius","diana-ross","die-auster-bunny","die-nerven","dijon","ding_dong","dinosaur-jr","diogo-strausz","dirty",
+  "dirty-disco","dirty-post-punk","dirty-three","disassembler","disco","disco-dancing","disco-not-disco","distortion","diving","dj",
+  "dj-city","dj-esther-hamalka","dj-fudge","dj-jahel","dj-pippi-willie-graff","dj-seinfeld","dj-set","dj_itek","django-django","dltzk",
+  "dmx-krew","doll-by-doll","dolly-parton","dominica","don-lifted","donna-summer","dontgiveup","doomcannon","dordeduh","downbeat",
+  "downfall","downtempo","dream","dream-pop","dreaming","dreams","drifting","drimia","drive-by-truckers","drone",
+  "droneflower","drug-church","drum-n-bass","drums","dry-cleaning","dtp","dub","dubstep","duke-ellington","dum-dum-girls",
+  "duran-duran","dutty_nation","dylan-dylan","e-street-band","earl-sweatshirt","earth","earthgang","east-on-fire","ebm","echo",
+  "eclat-crew","eclectic","eddie-kendricks","eden-burns","edm","eels","eighties","einsturzende-neubauten","el-michels-affair","elections",
+  "electric-dreams","electric-guitar","electric-see","electric-zoo","electro","electro-funk","electro-union","electroacoustic","electrofunk","electronic",
+  "electronic-dreams","electronic-life","electronica","electropop","elektro","elephant","elephant-hive","elephant-man","elephant-stone","elianna",
+  "elizabeth-fraser","elles","elliott-smith","elton-john","elvis-costello","elvis-presley","emahoy-tsegue-maryam-guebrou","emanuela","emeka-ogboh","emily-scott-robinson",
+  "emma-ruth-rundle","emotional","emotions","empire-burlesque","end-it","end-of-corona-party","end-of-summer","england","ennio-morricone","ensamble-music",
+  "ep","erika-dohi","erkin-korai","erlend-apneseth-trio","erykah-badu","eternal-struggle","ethel-cain","ethereal","ethiopiques","euro-dance",
+  "euro-pop","everglades-computer-club","every-time-i-die","everything","everything-but-the-girl","exciter","executioners-mask","exile-on-main-street","exodus","exotica",
+  "experimental","experimental-jazz","experimental-rock","explore","eyal-talmudi","ezra-collective","fables-of-the-reconstruction","factory","fall","faltydl",
+  "fantasy","farmer-dave-scher","fast-music","fatboy-slim","father-john-misty","fatima-al-qadiri","fatoumata-diawara","fauna","fauve","faye-webster",
+  "feeble-little-horses","feel-good","feeling-feeling","feelings","felipe-gordon","festival","fever-ray","fieh","fillmore-east","filth",
+  "filth-is-eternal","final-light","fink","fiona-apple","fire-flight","fire-of-love","firebreather","fireground","first-aid-kit","fka-twigs",
+  "fleetwood-mac","floating","floating-points","flora","florence-the-machine","florist","fly-anakin","flyte","foals","foamfoot",
+  "foe","foetus","foko-bizarro","folk","folk-rock","folly-tree","folx","fonk","fontaines-dc","foo-fighters",
+  "footwerk","for-the-roses","foreign-affair","four-stroke-baron","fourth-world","foxtails","fractals","frames","france","francisca-valenzuela",
+  "frank-ocean","frank-turner","frank-zappa","franz-ferdinand","franz-yuzef","frayle","freak","freak-heat-waves","freak-pop","fred-p",
+  "freddie-hubbard","free","freebritney","freedom","freemind","french","friday-afternoon","frightened-rabbit","from-the-edge","front-de-cadeaux",
+  "fruit-bats","fucked-up","fujiya-miyagi","full-moon-fever","full_blown","funk","funk-punk","funk-sinatra","funk-soul-and-rb-singles","funky",
+  "future-boogie","future-garage","fx","fyc","fאנק","gang-of-youths","garage","garbage","garden-city-movement","gary-brooker",
+  "garzen","garzen-records","gaz-coombes","gene-clark","gene-on-earth","general-ludd","genghis-tron","gentle-sinners","george-harrison","george-scott",
+  "george-young","geshem","get-a-grip","ghost","ghost-fame","ghost-power","gianni-brezzo","gideon","gil-scott-heron","gilbert-cohen",
+  "ginger-bakers-air-force","giraffi-dog","girls","glam","glitch","global-beats","glok","goats-head-soup","golden-bug","gone-with-the-flood",
+  "goo","good-intentions","good-stuff","good-times","gorillaz","gospel","gospelbeach","goth-rock","goth-synth","gouge-away",
+  "govt-mule","gp","grace-cummings","graham-gouldman","gram-parsons","grandaddy","grateful-dead","graves","greenleaf","greenleafes",
+  "greg-puciato","grievous-angel","grime","grindcore","grivo","grizzly-bear","groove","groove_salad","ground","group-listening",
+  "gruff-rhys","grunge","guinu","guitar-instrumentals","guitars","guitars-are-ok","guitarsfx","guns-n-roses","gustaf","guy-contact",
+  "gwar","gwenno","gypsy-blood","haai","habibi","hagop-tchaparian","haim","hair-metal","hal-blaine","half-waif",
+  "halloween","halsey","hamish-kilgour","hangmans-chair","hania-rani","hannah-holland","happy-hardcore","harakiri-for-the-sky","hard-feelings","hard-promises",
+  "hard-soul","hardcore","harp","harry-belafonte","harsh","harvest","harvest-moon","hassid","hate","haunter",
+  "hawkwind","haws","haya-zaatry","health-goth","heap","heart","heartbreakers","heartless-bastards","heartworms","heaven",
+  "heavy-metal-maniac","hebrew","helado-negro","henry-3000","herbert","heriot","hermetics","high-command","higher-power","highway-61-revisited",
+  "hill-country-blues","hill__gully","hill_and_gully","hinako-omori","hip-hip","hip-hop","hip_hop","hipharpcollective","hippie","hippie-death-cult",
+  "hippop","hiss-golden-messenger","ho99o9","hold-on","hollie-cook","holocaust","holodrum","holy","home","home-edition",
+  "homegrown","honeyglaze","hoodna-orchestra","hooray-for-earth","hooveriii","hope","hope-sandoval","horace-andy","hoshina-anniversary","hot-chip",
+  "house","house-of-mythology","houses-of-the-holy","howl","howlin-wolf","hozier","https-mcdn-podbean-com-mf-web-jxqmqc-mani_time_26-03-246p1zg-mp3","hubbabubbaklubb","hugs","hukwe-zawose",
+  "hurray-for-the-riff-raff","hushed-and-grim","husker-du","hybrid","hyperpop","hypnotic","i-dont-speak-french","i-like-trains","i-tek","ian-brown",
+  "ian-curtis","ian-sweet","ibiza","ic3peak","idaho","idles","idm","iggy-pop","ilona","im-with-her",
+  "imperial-triumphant","imposter-syndrome","impulse","in","in-fields","in-flagranti","inabell","india","indie","indie-dance",
+  "indie-folk","indie-pop","indie-rock","indietronica","indigo-de-souza","indus","industrial","infected-rain","infidels","ingredient",
+  "insomniac-bears","instinct","instrumental","internasjonal","international-harvesters","international-music","interview","invisible-inc","iogi","iranianmusic",
+  "iron-maiden","is","isaac-hayes","isis","island-breaks","isley-brothers","isobel-campbell","israeli","israeli-pop","it-still-moves",
+  "italo","italo-disco","italo-funk","itek","its-immaterial","ivrit","izabo","izakman","izthmi","j-dilla-x-nujabes-tribute",
+  "j-g-thirlwell","j-lamotta","j-pop","jack-j","jackie-leven","jada_kingdom","jadu-heart","jaimie-branch","jam-band","jamaica",
+  "james-alexander-bright","james-blake","james-brown","james-righton","jamie-paton","jamie-t","janelle-monae","janis-ian","japan","japanese-breakfast",
+  "japanese-traditional","jaren","jason-isbell","jason-molina","jay-z","jazmine-sullivan","jazz","jazz-funk","jazz-o-tech","jazz-rap",
+  "jazz-rock","jazzy","jeff-ament","jeff-beck","jellyfish","jenny-hval","jenny-lewis","jeremy-ivey","jerry-cantrell","jerry-garcia",
+  "jesca-hoop","jessie-ware","jethro-tull","jex-opolis","jfdr","jim-morrison","jim-thirlwell","jimbo-j","jimi-hendrix","jimi-tenor",
+  "jimmy-cliff","joan-baez","joanna-sternberg","joanna-stingray","joao-donatov","jockstrap","jodi","joe-goddard","joe-jackson","joey-negro",
+  "jogada","john-cale","john-frusciante","john-leckie","john-lennon-yoko-ono","john-martyn","john-moreland","john-peel","john-prine","johnny-cash",
+  "johnny-clarke","johnny-marr","johnny-winter","jolene","joni-mitchel","joni-mitchell","jordan-nocturne","josefine-berger","josephine-foster","josh-homme",
+  "josh-wink","journey","jouvert","joy-division","judah-warsky","julee-cruise","julia-holter","julian-cope","julie-byrne","jungle",
+  "jupiter","just-mustard","kabaka-pyramid","kaidi-tatham","kali-uchis","kamaal-williams","kamyar-ring","kangding-ray","kapitan","kapote",
+  "karen-dalton","kate-bush","kc50","keep-burning","kelly-lee-owens","kendrick-lamar","kenny-kirkland","kerri-chandler","kes","ketoret",
+  "kettama","kevin-morby","keys-n-krates","khidja","khold","khruangbin","killer-be-killed","kim-deal","kim-gordon","kindness",
+  "king-crimson","king-gizzard-the-lizard-wizard","king-gizzard-the-lizard-wizardֿ","king-hannah","king-isxan","king-woman","kiss","knife-girl","kode9","kokoro-disco-san",
+  "kolegos","kollmorgen","konshens","koreless","kraftwerk","krallice","kranium","krautrock","kula-shaker","kuniyuki-takahashi",
+  "kutiman","l-a-wich","l7","la-femme","la-luz","lady-blacktronika","lady-gaga","lady-wray","ladytron","lael-neale",
+  "laibach","laid-back","lambchop","lambrini-girls","lana-del-rey","landsacape","lannda","lara-snow","lars-bartkuhn","las-shivas-del-ritmo",
+  "laura-marling","laura-mvula","lauren-duffus","laurence-matte","laurent-bardainne-tigre-deau-douce","laurie-anderson","layla","le-butcherettes","lea-lisa","leadbelly",
+  "lebanon","led-zeppelin","lee-ranaldo","leftfield","leftfield-house","leftfield-pop","leftfield-techno","leftism","legendary-pink-dots","leisure",
+  "leonce","leop","les-dynamites","levon-helm","lgbt","liars","library-music","life","life-ballad","lifehouse",
+  "lifter-puller","light","light-sleeper","likkle-nate","likkle_nate","lil-nas-x","lila-ike","lilu","limbo","lime-garden",
+  "line-marianne","lingua-ignota","lionel-loueke","lionel-richie","lior_hadar","lipelis","lisbon","little-big","little-feat","little-richard",
+  "little-roy","little-simz","liturgy","live","live-at-leeds","lo-fi","loaded","lobster-theramine","local-shit","lofi",
+  "lola-marsh","loma","london","lone","loose-fur","lord-shorty","loretta-lynn","los-bitchos","lost-albums","lost-in-space",
+  "lost-sounds","lotic","lotus","lou-reed","lounge","love","love-machine","love-your-witch","lovers-rock","low",
+  "lowell-george","lowen","loya","lrain","luca-lozano","lucid-layne","lucifer","lucille-crew","lucinda-williams","lucrecia-dalt",
+  "ludovico-einaudi","luke-una","luke-vibert","lump","lush","luvstep","lynyrd-skynyrd","lyric-hood","m-i-a","mac-miller",
+  "machillado","machine-music","machines-charm","mad-season","mad_appel","madchester","made-to-measure","madison-mcferrin","madlib","magazine",
+  "maggot-heart","magic","magnolia-electric-co","mai-mai-mai","mainstream","makaya-mccraven","makez","maleek-berry","malka-spigel","mamzool",
+  "man-on-man","manassas","manchester-orchestra","manic-street-preachers","manu-dibango","marbl","marcio-lomiranda","mareux","margo-guryan","maria-bc",
+  "maria-somerville","marianne-faithfull","marina-herlop","marinero","marisa-anderson-and-william-tyler","marissa-nadler","mark-e-smith","mark-hollis","mark-lanegan","mark-ronson",
+  "marley","marshall-allen","martha","marvin-gaye","mary-j-blige","mary-lattimore","mary-ocher","mary-weiss","masicka","masok",
+  "massa-nera","massimiliano-pagliara","mastadon","mastodon","matisyahu","matmos","mats-gustafsson","matt-elliott","matthieu-beck","matti-caspi",
+  "mavi","max-graef","maya-isacowitz","maya-zeltzer","maylee-todd","mazeppa","mazzy-star","mc","medicine-singers","meditation",
+  "megadeth","meirav","meirav-iser","meirav_iser","melancholy","mellow","mellow-kim","melodys-echo-chamber","melt-yourself-down","melvins",
+  "memorials","men-of-north-country","menahan-street-band","mental-fracture","merav-iser","merav_iser","mess-esque","metal","metal-preyers","methyl-ethel",
+  "metronomy","metz","mexico","mf-doom","mfrsm","mgmt","mical_teja","michael-chapman","michael-head","middle-east",
+  "midlake","midnight-peacocks","midwest-shoegaze","mike","minimal","minimal-compact","minimal-synth","minimalism","miranda","mirror-ball",
+  "missed-out-records","mitar-subotic-goran-vejvoda","mitch-davis","mitski","mixtape","model-actriz","moderat","modern-classical","modern-italo","modern-talking",
+  "modeselektor","mogwai","mohbad","mojave-3","mol","molder","monad","mono","monolord","monster",
+  "monsters-of-folk","moodmusic","moods","moodymann","moog","moom","moontribe","moonwalking","moor-mother","morning",
+  "morphine","morphlexis","morrel","morrison-hotel","morrissey","mother-love-bone","mother-mother","mother-of-mars","mother-tongues","motown",
+  "mountains","mourning-a-blkstar","moya-brennan","mr-heavy-ms-low","mr-ranking","mtv","multi","multi-culti","muna","municipal-waste",
+  "murmur","murphys-law","muscle-shoals","mushrooms","music","music-from-memory","music_for_bar","musique","mustafa","mutoid-man",
+  "muuuusique","my-bloody-valentine","my-morning-jacket","my_lord","mystical","mysticism","naima-bock","nancy","napalm-death","nation-of-language",
+  "nature","nea-eini","neal-casal","nebel3000","needs","negativland","neil-young","nenor","nenorion-music","neo-soul",
+  "netwerk","new","new-adventures-in-hi-fi","new-age","new-beat","new-idea-society","new-metal","new-multitudes","new-music","new-new-wave",
+  "new-order","new-pagans","new-retro-wave","new-stuff","new-wave","new-year","new-york-dolls","new-york-house","new-zealand","newdad",
+  "next-wave","nice","nick-cave-the-bad-seeds","nick-drake","nick-waterhouse","niggun-project","night-crickets","nightcrusher","nightlands","nigy-boy",
+  "nile-rogers","nils-frahm","nilufer-yanya","nin","nina-simone","nineties","nirvana","nite","njoi","no-depression",
+  "no-joy","no-other","no-point-baby","no-wave","noa-sasson","nobro","noise","noise-rock","nomka","nomke",
+  "non-life","noname","noomi","north-mississippi-allstars","nostalgia","nothing-compares","notting_hill_carnival","nourished-by-time","nouvelle-vague","noxi",
+  "nu-disco","nu-jazz","nu-soul","number-one-record","nur","oaa","oasis","october-7","ohio","oksyi",
+  "old-school","old-ways","oldies","oldschool","olivia-rodrigo","omri-smadar","on-the-beach","oneida","open-door-policy","open-mike-eagle",
+  "or-edry","organica","ori","oriental","orka","orthodox","oscean","oso-oso","osog","oss",
+  "other-lives","otoboke-beaver","out-of-time","outdoors","outkast","outlaw","outside-gazing","outtakes","ouzo-bazooka","ovation-records-1971-1972",
+  "over-the-rhine","oy-li","oz-wave","ozzy-osbourne","p-j-harvey","pallbearer","panda-bear-sonic-boom","panim","panna-cotta","panopticon",
+  "paramore","parannoul","parekh-singh","paris","party-dozen","party-time","pat-garrett-billy-the-kid","pat-metheny","patrice_roberts","patrick-cowley",
+  "patti-smith","pattie","paul-kossoff","paul-mccartney","paul-rudder","paul-simon","paul-weller","pavement","pc_music-label","peace",
+  "pearl-jam","pele","percussion","pere-ubu","perfume-genius","permanent-vacation","persianpop","pescheria","pet-shop-boys","peter-gabriel",
+  "peter-green","peter-holsapple","peter-murphy","peter-perrett","peter-tosh","petri-olavi-paljakka","petrol-girls","phantom-limb","pharoah-sanders","pharrell-williams",
+  "phil-lesh","phosphorescent","physical-graffiti","physics","piano","pictish-trail","pil","pink-floyd","pink-witch","pip-blom",
+  "piri-reis","pits","pj-harvey","placebo","plane-to-paris","planet-waves","plastikman","playing","podcast","poet",
+  "pokey-lafarge","pole","pop","pop-rock","poppy","portishead","portrayal-of-guilt","pose","possibles-quartet","post-club",
+  "post-hardcore","post-industrial-boys","post-internet","post-post-punk","post-punk","post-rock","postpostrockqpunk","pote","power-ballads","power-disco",
+  "power-pop","power-trip","prelude","presence","primal-code","prince","prins-thomas","priori-presents-red","pro-democratic","procol-harum",
+  "prog","progressive-rock","projekt-gestalten","prospa","protoje","protomartyr","protomythos","psych","psychedelia","psychedelic",
+  "psychedelic-groove","psychedelic-pop","psychedelic-porn-crumpets","psychedelic-rock","psychedelic-soul","psychedelica","psychedellica","public-enemy","public-image-ltd","punchbrothers",
+  "punk","punk-funk","punky-wash","pure-space","purple-mountains","purr","pussy-riot","pאנק","q-tip","quarantine-fun-times",
+  "quasimoto","queen","queens-of-the-stone-age","quentin-tarantino","quincy-jones","r-e-m","rab_a_dub","rabii-harnoune-v-b-kuh","raccoon-city","radiant-love",
+  "radio","radio-city","radiohead","raf-rundell","rafster-blaster-experience","rage","rage-against-the-machine","ragga","raggamuffin","ragged-glory",
+  "rain-dirty-valleys","rainy-music","rani","ranking_levy","rap","rarities","rasta","rave","raw-tapes","ray-charles",
+  "rb","real-emotion","really-from","reanna-coleman","reckoning","recovery_riddim","recreational-records","red-axes","redemption","reflection",
+  "reggae","reggaton","regressive-left","reissue","reissued-from-obscurity","reissues","rejoicer","rekid","relaxation","rema",
+  "remember","remi-wolf","repetition","residents","retro","retrowave","revelators-sound-system","reverse-hallucinations","rhode-brown","rhythm",
+  "richard-dawson-circle","richard-h-kirk","rick-rubin","rickie-lee-jones","ride","rihanna","riley-gale","rim-banna","rimojeki","riot",
+  "riot-act","rip","ripped-to-shreds","ritual","rival-consoles","rival-sons","rl-burnside","rnb","rob-zombie","robbie-robertson",
+  "robbie-shakespeare","robert-fripp","robert-glasper","robert-smith","robert-wyatt","robin-holcomb","robyn-hitchcock","rock","rock-n-roll","rockerpockets",
+  "rocket-juice-the-moon","rocksteady","rocktronica","roisin-murphy","roky-erickson","roland-clark","rollingֹstones","rollover-milano","romy","roni-alter",
+  "ronnie-spector","roosevelt","roots","rosalia","rotem-or","rowland-s-howard","roxy-music","roy-ayers","roy-reemy","royal-blood",
+  "royal-trux","royksopp","royksopp-2","rroxymore","rtj","rub-a-dub","rub_a_dub","ruba-shamshoum","rudeboy_sound","rufus-du-sol",
+  "ruger","run-the-jewels","rupa","rush","russo-weinberg","rust-never-sleeps","ryan-gosling","rythmic","rytikal","ryuichi-sakamoto",
+  "s-h-i-r-a-n","saada-bonaire","saba","sabbo","sabo","sacred","sad-people","saga-veliz","saint-etienne","salad_groove",
+  "sam-evian","sam-goku","samba","sampha","samples","sandy-barber","sarah-jarosz","sasha-daniel","satellites","satellites-2",
+  "saul-williams","sault","savages","saz","scalping","scarcity","scary-time","science","scott-pilgrim","scott-walker",
+  "screamadelica","screaming-trees","scud","sean-johnston","sean_paul","second-helping","seger-peger","selections","self-enquiry","sensei-lo",
+  "sentinel-sound","september-song","set","sexy-mood","sexy-time","sexymood-music","shabab-al-quds","shabaka","shabba","shafiq-hussain",
+  "shaggy","shake-your-money-maker","shamir","shannon-wright","shapes","sharon-sometimes","sharon-van-etten","shatta","shenseea","shifting-gears",
+  "shilpa-ray","ship-of-fools","shlomit","shmone","shoegaze","shooting-daggers","shortparis","shotnez","show-me-the-body","shriekback",
+  "shurpi","shvr","sidus-atrum","sigh","sigur-ros","silence-silence-silence","silent","silver-jews","silver-ladders","silverdon",
+  "simone-de-kunovich","sinan","sinead-oconnor","singer-songwriter","singles","sinnery","siouxsie-and-the-banshees","sir-was","ska","skillibeng",
+  "skott","slave-to-sirens","sleater-kinney","sleeps-with-angels","sleigh-bells","slide","slide-guitar","slo-mo-disco","slow-dance","slow-train-coming",
+  "sludge","sly-robbie","smal-hits","smerz","smile-album","sneaky","snoop-dogg","soapskin","sobriety","soca",
+  "sofatalk","sofia-kourtesis","soft","soft-cell","soft-rock","soichi-terada","sol-selectas","solar-suite","solow","son-of-schmilsson",
+  "son-volt","songs","songs-for-beginners","songs-ohia","sonic-youth","sonja","sons-of-kemet","sophia-kennedy","sophie","sophisticated-boom-boom",
+  "sophisticated-boom-boom-2","sophya","soul","soul-clap","soulful-house","soulico","sound-exhibitions","sound_system","soundgarden","sounds",
+  "soundscape-orchestra","soundscapes","soundtrack","soundtracks","south-korea","southeastern","southern","southern-accents","southern-harmony","southern-rock-opera",
+  "southern-soul","soweto","space","space-cadets","space-disco","space-oddity","space-ragaton","space-travel","spaced","sparklehorse",
+  "sparks","special","special-edition","spector","speedboat","spencer-krug","spirit-adrift","spirit-of-the-beehive","spirits","spiritual",
+  "spiritual-jazz","spk","spoken-word","spoon","spring","sprints","spritual-jazz","squid","squirrel-flower","srefa",
+  "sssurrounddd","st-paul-and-the-broken-bone","st-paul-the-broken-bones","st-vincent","stage-fright","staple-singers","staraya-derevnya","statues","steely-dan","steffi",
+  "stella-got","stephan-micus","stephen-brodsky","stephen-malkmus","steve-albini","steve-brodsky","steve-mason","stevie-nicks","stevie-wonder","sticky-fingers",
+  "still-corners","sting","stoner","stories","str4ta","strand-of-oaks","strapping-young-lad","studio-barnhus","stuff","stylo-g",
+  "subterranean-masquerade","sudan-archives","suede","suff-daddy","sufjan-stevens","summer","summer-of-92","summerteeth","sun-ra","sun-tailor",
+  "sunshine","supercat","surf","surrender","susanne-sundfor","suspiria","swami-john-reis","swamp-dogg","sweaty-palms","sweet",
+  "synth","synth-pop","synth-pop-electronic","synth-wave","synthesizer-music","synthpop","system-of-a-down","sza","tal-eshel","tales",
+  "tali-flynt","talk-talk","talking-heads","tall","tamaradah","tame-impala","tangerine-dream","tania-saleh","tano","tapash",
+  "tara-nome-doyle","tarot","tartelet-records","taylor-kirk","team-me","techno","techo","tecwaa","tedeschi-trucks-band","tedross",
+  "teketeke","tel-aviv","teleman","television","tell-me-how-you-really-feel","temple-of-the-dog","tems","ten","ten-years-after","tenacious-d",
+  "terence-etc","terrace-martin","textures","thailand","the","the-1975","the-91-project","the-afghan-wigs","the-allman-brothers","the-allman-brothers-band",
+  "the-armed","the-band","the-basement-tapes","the-beach-boys","the-bear","the-beatles","the-black-crowes","the-black-keys","the-blessed-madonna","the-body",
+  "the-byrds","the-callous-daoboys","the-clash","the-clean","the-color-green","the-colundi-sequence","the-coral","the-crow","the-cure","the-dbs",
+  "the-delines","the-derek-trucks-band","the-doors","the-faces","the-fall","the-fall-of-troy","the-fear-ratio","the-flaming-lips","the-flying-burrito-brothers","the-fool",
+  "the-freewheelin","the-gilded-palace-of-sin","the-good-kind-of-trance","the-great-machine","the-guess-who","the-gun-club","the-highwomen","the-hold-steady","the-hu","the-jaffa-kid",
+  "the-jam","the-jayhawks","the-jazz-butcher","the-jew-in-you","the-kinks","the-last-poets","the-legendary-pink-dots","the-lemon-twigs","the-letter-u-and-the-numeral-2","the-lioness",
+  "the-lone-flanger","the-low-end-theory","the-maghreban","the-mighty-diamonds","the-minus-5","the-national","the-occupation","the-only-ones","the-paz-band","the-princess-of-death",
+  "the-prodigy","the-raconteurs","the-real-tuesday-weld","the-replacements","the-rockets","the-rolling-stones","the-roots","the-sadies","the-saints","the-secret-sea",
+  "the-secret-sisters","the-shadow","the-shangri-las","the-silver","the-smile","the-smiths","the-soft-pink-truth","the-specials","the-stranglers","the-streets",
+  "the-style-council","the-sugarcubes","the-sundays","the-tennessee-fire","the-the","the-thorns","the-times-theyre-a-changing","the-troops-of-doom","the-twilight-sad","the-untattooeed",
+  "the-vacant-lots","the-velvet-underground","the-vendetta-suite","the-vulcans","the-waterboys","the-weather-station","the-weeknd","the-well-bears","the-white-album","the-white-stripes",
+  "the-who","the-yardbirds","the-young-gods","theangelcy","theatre-music","thelonious-monk","theo-kottis","theos","therapy","things",
+  "thingz","third-son","this-is-the-kit","thom-yorke","thor-harris","thundercat","thurston-moore","till-haze","tim-burgess","tim-burton",
+  "tim-kasher","tim-smith","timber-timbre","time-fades-away","time-off","time-out-of-mind","timna-peretz","timothy-clerkin","tina-turner","tingz",
+  "tiny-fingers","tito-woo","tiwa-savage","tmo","tobago","toco-loco","toco_loco","togetherness","tom-carruthers","tom-petty",
+  "tom-petty-the-heartbreakers","tom-verlaine","tom-waits","tomberlin","tommy","tonights-the-night","tony-allen","toots-and-the-maytals","top_5","topheth-prophet",
+  "tori-amos","totemo","tour-maubourg","tower","trace-kotik","tracks-ii","trance","trance-but-the-good-kind","tree","trentemoller",
+  "tribak","tribal","trilion","trinidad","trinidad_and_tobago","trip","trip-hop","tripoli","tripping","tristan-braams",
+  "troels-hammer","tropic","tropical","tropical-fuck-storm","tropicalia","tropikal-camel","troy-sanders","troye-sivan","true-detective","true-queen",
+  "tuff-city-records","tune-yards","tunes","turk-grooves","turkish-music","turnstile","twen","twin-shadow","two-minutes-to-late-night","two_in_a_row",
+  "ty-segall","tyler-the-creator","tzvika-force","u-roy","ub40","uber-boogie","uk","uk-bass","uk-beats","uk-garage",
+  "uk-house","ukraine","umi","un-titled-productions","uncle-tupelo","unholy","unknown-mortal-orchestra","unplugged","ustad-abdul-karim-khan","uzi-ramirez",
+  "valiant","van-morrison","vangelis","vanity-project","vegan-friendly","vegetables","venom-prison","vero","vetiver","viagra-boys",
+  "vial","vibez","vieux-farka-toure","vince-staples","vini-vicious","vinyl-only","visions","vitalogy","vivien-goldman","voice-of-art",
+  "void","voidceremony","voyage","vs","vybz_kartel","waajeed","wah-together","wailin-storms","wake","wales",
+  "war","warm","warm-wind","warp","wasted-shirt","water-from-your-eyes","wave","waves","waxahatchee","wc",
+  "wednesday","weekday","ween","weezer","weird-fun","weird-nightmare","weird-pop","weird-times","weirdos","wes-freed",
+  "westerman","wet-leg","weyes-blood","whatever-the-weather","white-lies","whos-next","wigs","wiki","wilco","wildflowers",
+  "willie-nelson","wind","winter","winter-time","wish","wishbone-ash","witchcraft","wizards-of-the-west","wizkid","wojciech-rusin",
+  "wolf-alice","woman","women","woods","woodstock","wordcolour","working-mens-club","world","world-beats","world_fete_riddim",
+  "worldwide","wormrot","wow","wunderhorse","wyfl","wyfl_riddim","xen","xiu-xiu","yacht-rock","yaeji",
+  "yankee-hotel-foxtrot","yard-act","yawning-sons","yawning-youth","yaya-bey","yazoo","yellow-magic-orchestra","ylva-falk","yo-la-tengo","yoko-ono",
+  "yoo-doo-righ","yotam-avni","yotam-ben-horin","young-guv","young-israelites","young_israelites","your-character","your-highness","youth","youth-lagoon",
+  "yu-su","yungblud","yussef-dayes","yuvalevy","yves-tumor","zachery-allan-starkeyֿ","zadik-zecharia","zeal-and-ardor","zeal-ardor","zeresh",
+  "zero-db","zillas-on-acid","ziv","zizi-trippo","zohara","zuma","zz-top","µ-ziq","алла-пугачева","אבוקדו",
+  "אבי-בללי","אבי-נשר","אביב","אביב-גדג","אביב-גדג-2","אביב-גדג׳","אביב-מארק","אביב-פק","אביב-שריקי","אביבית-ישראלוף",
+  "אביגדור-בום","אביגיל-קובארי","אביה-קופלמן","אביחי-נפתלי","אביטל-אדר","אבימור-קינן","אבירם-נתנאל","אבישג-כהן-רודריגס","אביתר-בנאי","אבנר-גדסי",
+  "אבנר-טואג","אבסורד","אברהם-לגסה","אברי-גי","אגי-משעול","אדוארד-קא-ספל","אדי-הינטון","אדי-ודר","אדיר-אוחיון","אדם",
+  "אדם-בן-אמיתי","אדם-בן-נון","אדם-קרטיס","אהבה","אהבה-נכזבת","אהד-אנגל","אהד-פישוף","אהוד-בנאי","אוגוסט-2021","אוגוסט-2022",
+  "אודי-נאור","אודי-שרבני","אוהב","אוהד-פישוף","אוהד-שחר","אוהד-שרגאי","אוהיו","אווזה","אווירה","אוונגרד",
+  "אוזו-בזוקה","אוזי-אוסבורן","אוטובוסים","אוטרקי","אולי-דנון","אוליביה-ג׳ין","אוליביה-ניוטון-ג׳ון","אולפני-טריטון","אומנים-מקומיים","אוספורטיס",
+  "אוסקר-2018","אוסקרים","אופיר-אברהם","אופיר-בנימינוב","אופיר-בנימיני","אופירי","אופניים","אופק-יפרח-אזולאי","אופק-רם","אוקטובר-2021",
+  "אוקטובר-2022","אוקראינה","אור-אדרי","אור-בירון","אור-דרומי","אור-הלפר","אור-כשדים","אור-לגויים","אוראל-צפרוב","אוראל-תמוז",
+  "אורבנו","אורגניקה","אורון-לאור","אורחת","אורטגה","אורי-ביילין","אורי-בראונר-כנרות","אורי-דביר-מלך","אורי-זהר","אורי-זוהר",
+  "אורי-זוהר-חוזר","אורי-זר-אביב","אורי-כנרות","אורי-סנדר","אורי-עופר","אורי-פרוסט","אורי-קוטנר","אורי-קצנשטיין","אורי-שוחט","אוריה-ויצטום",
+  "אורית-באום","אורית-טשומה","אורלי-יעקובי","אורן-אסף","אורן-בן-סימון","אורן-ברזילי","אורן-זילברשטיין","אורן-לוטנברג","אורן-מוסיאנו","אושיק-לוי",
+  "אחד-חורף","אחים","אחרונים-על-החוף","אחרית-הימים","אטלנטה","אי-צדק","איאם","איאן-בראון","איאן-נו","איגי-וקסמן",
+  "איה-זהבי-פייגלין","איה-כורם","איזבו","איטלו-דיסקו","אייטיז","אייטק","אייל-אבן-צור","אייל-גילה","אייל-זוסמן","אייל-ליאון-קצב",
+  "אייל-נחום","אייל-עצמון","אייל-ערב","אייל-רוב","אייל-שוורצמן","איילו","איילות","איימי-ויינהאוס","איימי-מאן","איירו",
+  "אילה-זיו","אילונזו","אילן-גרין","אילן-וירצברג","אילן-פלד","אימו","אין-גאנר","אינדי","אינדי-ישראלי","אינדי-נשי",
+  "אינדי-סקנדינבי","אינדי-פולק","אינדי-פופ","אינדי-רוק","אינדיאלטרנטיב","אינדיזוםזום","אינדינגב","אינדינגב-2021","אינדינגב-2022","אינדיסיטי",
+  "אינדיפופ","אינדישמינדי","אינדסטריאל","אינסטרומנטלי","אינפקטד-מאשרום","איפה-הסוסים","איציק-פצצתי","אירה-חודיאק","אירוויזיון","אירוח",
+  "אירוחים","אירוסמית׳","אירועים","איריס-קול","אירית-דקל","אישי","איתי-בלטר","איתי-זנגי","איתי-חמודי-לוי","איתי-נירנבלט",
+  "איתי-סנדובסקי","איתמר-בק","איתמר-ברנשטיין","איתמר-ציגלר","איתמר-קציר","איתן-ארלקי","איתן-מילר","איתן-פלד","איתן-רדושינסקי","אכזבה",
+  "אלאניס-מוריסט","אלבום","אלבום-בכורה","אלבום-גנוז","אלבום-חדש","אלבום-כפול","אלבום-לייב","אלבום-פרידה","אלבום-קונספט","אלבום-שנה",
+  "אלבומי-בכורה","אלבומי-הופעה","אלבומי-השנה","אלבומי-השנה-2021","אלבומי-שנה","אלבומים","אלבומים-חדשים","אלבומים-ישראלים","אלביס-קוסטלו","אלבמה-שייקס",
+  "אלברט-סופר","אלברט-קינג","אלגיר","אלה-גוי-מאיר","אלה-לי","אלה-פוגצובה","אלה-רפאל","אלה-שיק-בלום","אלון-אבוטבול","אלון-אולארציק",
+  "אלון-ווסרמן","אלון-לוטרינגר","אלון-עדר","אלונה-דניאל","אלונה-הבר","אלט-קאנטרי","אלטון-גון","אלטון-ג׳ון","אלטין-גאן","אלטרנטיב",
+  "אלטרנטיב-היפ-הופ","אלטרנטיב-ערבי","אלטרנטיב-רוק","אלטרנטיבי","אלי-אברמוב","אלי-ישראלי","אלי-לס","אלי-מגן","אלי-רוזן","אליאל-קריספיל",
+  "אליה","אליוט-סמית","אליזבתטאון","אלימות","אלימות-משטרתית","אליסון-ראסל","אליעד-גרין","אלישע-בנאי","אלכמיסט","אלכס-אנסקי",
+  "אלכס-טרנר","אלכס-משה","אלכס-צילטון","אלכסיי-נבלני","אלכסנדר-פן","אלמה-שדה-מושונוב","אלמוג-מלר","אלן-גינסברג","אלעד-קמחי","אלעד-שופן",
+  "אלפונסו-קוארון","אלפנט-הייב","אלקטרו","אלקטרוני","אלקטרוניקה","אלקטרופופ","אלרן-דקל","אמאפיאנו","אמביינט","אמון",
+  "אמילו-האריס","אמילי-קרפל","אמיר-גלבע","אמיר-גרומן","אמיר-צורף","אמן-טוב","אמנדה-שיירס","אמנים","אמנים-מקומיים","אמנים-צעירים",
+  "אמפיאנו","אמריקנה","אנאיס-מיטשל","אנגל-אולסן","אנג׳ל-אולסן","אנדי-ווד","אנדרו-ווד","אנוני","אנטי-גזענית","אנטי-ולנטיינז",
+  "אנטי-מיליטריסטי","אנטי-מלחמתי","אנטיביוטיקה","אנטיתזה","אניטה-ליין","אנימציה","אנני-לנוקס","אסטרולוגיה","אסי-דיין","אסי-לוי",
+  "אסיד","אסף-אמדורסקי","אסף-ארליך","אסף-הרץ","אסף-קורן","אסף-תלמודי","אסתר-רדא","אפיק","אפרו","אפרוביט",
+  "אפרוביטס","אפריל-2022","אפריקה","אפריקה-התחשמלה","אפרת-בן-צור","אפרת-גוש","אפרת-קולברג","אצבע-בזאפה","אצבע-בלילה","אצבע-בסכר",
+  "אצבע-בסכר-ספיישל","אקו","אקוט","אקוסטי","אקזיסטנציאליזם","אקלקטי","אקסום","אקספרימנטלי","אקספרסיוניזם","אר-אי-אם",
+  "אראנדבי","ארבל","ארבע-עונות-השנה","ארגוב","ארגנטינה","ארד-טומשין","ארהב","ארון-טרנר","ארז-דסקל","ארז-יופה",
+  "ארז-לב-ארי","ארז-פרביאש","ארז-שמידע","ארט-גרפונקל","ארט-פופ","ארי-גורלי","ארי-פולמן","אריאל-זילבר","אריאלה-ברוך","אריך-רודיך",
+  "אריס-סאן","אריק-אבר","אריק-איינשטיין","אריק-לביא","אריק-סיני","אריק-קלפטון","אריק-רודיך","אריתה-פרנקלין","ארכיון","ארכיון-הפאנק-בישראל",
+  "ארל-סווטשירט","ארמון","ארץ-ים","ארץ-ישראל-הטובה-והישנה","ארקטיק-מנקיז","אר׳נ׳בי","אתי-אנקרי","אתי-רומנו","אתל","אתם",
+  "אתר","את׳ל-קיין","את׳נס-ג׳ורג׳יה","באדי-גאי","באס","באפלו-ספרינגפילד","בארבי","בארי-גיב","בגידה","בוא-לבר",
+  "בוב-דילן","בוב-וויר","בובי-וויטלוק","בובי-וומאק","בובי-צארלס","בוגו","בוגי","בוורלי-גלן-קופלנד","בויון","בועות-סבון",
+  "בועז-שרעבי","בוקר-טוב-אדוארד","בוריטו","בזי-בי","בזעת","בחורות-מגניבות-רצח","בחייאתזוםזום","בחירות","בחירות-המאזינות","בחירות-המאזינים",
+  "בחירות-מאזינות","בחירות-מאזינים","בטי-לאבט","בטינה-פיינשטיין","ביג-ביט","ביג-סטאר","בידוד","ביונסה","ביופיק","ביורק",
+  "ביטניק","ביטפוט","בייב","בייגלה","בייסליין","ביכורים","ביל-ברי","ביל-קלהאן","בילי-בראג","בילי-גואל",
+  "בילי-דה-קיד","ביקורות-שירים","ביקורת-הופעה","ביקיני","בכורה","בל-הוקס","בלאגן","בלאק-סבאת","בלאק-קיז","בלאק-קרואוז",
+  "בלאקגייז","בלדות","בלובנד","בלוג","בלוז","בלוז-רוק","בלי-תירוצים","בליינד-מלון","בלס-אנד-מרסי","בלקן-ביט-בוקס",
+  "בלש-אמיתי","במקום-קוואמי","בן-אבגיא","בן-אילון","בן-גולן","בן-ריפתין","בנות-של","בנטון","בני-האלף","בני-נגרי",
+  "בנים-של","בנימין-אסתרליס","בסיסטיות","בעז-שרעבי","בקטע-קריפי","בקליל-יעני","בקשות-מאזינים","בר-מרדיקס","בר-פלג","בר-צברי",
+  "בר_אלפנדרי","בראיין-וילסון","ברוך-אברהם","ברונסקי-ביט","ברוס-ספרינגסטין","ברוסי","ברזיל","ברי-סחרוף","בריאן-אינו","בריט-פאנק",
+  "בריטפופ","בריינטרסט","ברייק-ביט","ברייקור","בריל","ברלין","ברנדי-קרלייל","ברק-חיימוביץ","ברק-כהן","ברק-מאייר",
+  "בתוך-ישי-קיצלס","גאז","גאז-ראפ","גאזז","גאיה-ויסמן","גאם","גאם-בנד","גאם-בסוכה","גאם-בסוכה-2021","גאם-בסוכה-2024",
+  "גאן-קלאב","גאנט-בלאי","גאראז׳","גארי-לוריס","גארי-קלארק-גוניור","גארת-הדסון","גבעות-גורל","גבעת-חלפון-אינה-עונה","גבריאל-בלחסן","גבריאל-בן-חורין",
+  "גבריאל-ברויד","גדי-פטר","גדי-רונן","גו-קוקר","גואה","גואטה","גואנה-ניוסום","גואנה-סטרנברג","גודי-סטיבנס","גודי-סיל",
+  "גוזי-כץ","גולדן-סמוג","גולי-קרוז","גוליאן-קופ","גון-בן-ארי","גון-מאייל","גון-פוגרטי","גון-פריין","גוני-מיטשל","גוני-קאש",
+  "גוניור-קימברו","גונתן-וילסון","גוספל","גורג-האריסון","גורג-הריסון","גורדון-לייטפוט","גוש-ריטר","גותית-נחמדה","גזענות","גיא-בהיר-אתה-קירח",
+  "גיא-בן-עמי","גיא-בנעמי","גיא-גיטר","גיא-ויהל","גיא-וינטרוב","גיא-חגג","גיא-חג׳ג׳","גיא-מוזס","גיא-מזיג","גיא-נאור",
+  "גיא-קלארק","גיא-רודוביץ","גיא-שוורץ","גיאגיא","גיאחה","גידי-גוב","גיטרות","גיטרות-פיצוצים","גיטרותתת","גיי-בנט",
+  "גיי-למוטה","גיי-מסקיס","גייהוקס","גיין-בורדו","גייסון-איזבל","גייסון-מולינה","גיל-בר-הדס","גיל-מטוס","גיל-סמטנה","גיל-סקוט-הרון",
+  "גילברט-ברויד","גילי-אבישי","גילי-אסרף","גילי-בלום","גילי-יאלו","גילי-קמחי","גילי_בנימין","גיליאן-וולש","גים-אורורק","גים-גיימס",
+  "גימי-הנדריקס","גימי-פייג","גין-קלארק","גל-גולני","גל-דה-פז","גל-חי","גל-כץ","גל-שניידר","גלי-אלון","גלי-עטרי",
+  "גליפיש","גלעד-ויטל","גלעד-כהנא","גלעד-לוין","גמייקה","גנגו","גני-בת","גני-לואיס","גני-פנקין","גני-פנקין-2",
+  "גניס-גופלין","גסטין-טאונס-ארל","גסי-ווייר","גסיקה-לי-מייפילד","גף-אמנט","גף-בק","גף-טווידי","גפן-רון","גפרי-לי-פירס","גק-ווייט",
+  "גקו-אייזנברג","גקי-לבן","גקסון-בראון","גראז","גראם-פרסונס","גראנג","גרג-אולמן","גרהאם-נאש","גרוב","גרוב-ישראלי",
+  "גרוב-נשי","גרזן","גרזן-רקורדס","גרי-אקשטיין","גרי-גרסיה","גרייטפול-דד","גריינדקור","גריניץ-ווילאג","גרמנים","גרנדדי",
+  "גרנט-לי-באפלו","ג׳אאז","ג׳אאז-וסאבו","ג׳אז","ג׳אזז","ג׳ואן-באאז","ג׳ואן-שלי","ג׳ודי-סיל","ג׳וליאן-קופ","ג׳ון-דנבר",
+  "ג׳ון-מלנקמפ","ג׳ון-מרטין","ג׳ון-פוגרטי","ג׳ון-פריין","ג׳וני-מיטשל","ג׳וני-קאש","ג׳ורג׳-יאנג","ג׳ז","ג׳ייהוקס","ג׳יין-בורדו",
+  "ג׳ייסון-איזבל","ג׳ייסון-מולינה","ג׳ים-ג׳יימס","ג׳ימבו-ג׳י","ג׳ימי-הנדריקס","ג׳ימי-פייג׳","ג׳ין-בורדו","ג׳ין-קלארק","ג׳ינג׳ר-בייקר","ג׳נגו",
+  "ג׳ני-פנקין","ג׳ניס-ג׳ופלין","ג׳סטין-טאונס-ארל","ג׳ף-איימנט","ג׳ף-בק","ג׳קו-אייזנברג","ג׳קסון-בראון","ג׳רי-לי-לואיס","דאב","דאלאס-גוד",
+  "דאלי-לאמה","דאנה-איבגי","דאנס","דאנסהול","דאסטי-היל","דארק","דארק-פופ","דב-גריזלי","דבנדרה-בנהרט","דבר-המערכת",
+  "דה-בנד","דה-וויקנד","דואו","דובי-זלצר","דובי-לנץ","דובי-שרגא","דוד-ארבל","דוד-גורנשטיין","דוד-שאול","דודו-טסה",
+  "דודי-לוי","דוויין-אולמן","דויד-ברוזה","דויד-פרץ","דולב-אביב","דולי-פרטון","דום","דונה-סאמר","דוני-דארקו","דונלד-גלובר",
+  "דוקאביב","דוקאביב-2022","דוקאביב-2023","דוקומנטרי","דוקטור-ג׳ון","דוקים","דור-הייטנר","דור-הררי","דור_המבול","דורה-אספרסו",
+  "דורון-בוטניק","דורית-ליליין","דורלקס-סדלקס","דותן-לבני","דותן-שמר","די-גיי","דיגי","דיגיי","דיגיי-סט","דידה-פלד",
+  "דיוויד-בואי","דיוויד-ברמן","דיוויד-סילביאן","דיוויד-קרוסבי","דיויד-לינץ","דייב-מייסון","דייב-רולינגס","דייב-שר","דייוויד-קרוסבי","דייויד-בואי",
+  "דייויד-לינדלי","דייויד-קרוסבי","דיימון-אלברן","דילן-לבלנק","דין-כרמל","דין-לברון","דינג_דונג","דינוזאור-גוניור","דינוזאורוס","דיסטורשן",
+  "דיסני","דיסקו","דיסקו-עייף","דיסקו-פאנק","דיקי-בטס","דלוקס","דליה-מבורך","דליה-רביקוביץ","דלייני-ובוני","דמוקרטיה",
+  "דן-אורבך","דן-תורן","דנה-אינטרנשיונל","דנה-בלום","דנה-גזית","דנה-קסלר","דני-גלבוע","דני-דותן","דני-הדר","דני-וויטן",
+  "דני-לוזון","דני-מקוב","דני-סנדרסון","דני-עבר-הדני","דני-קוטנר","דניאל-אביב","דניאל-גולדברג","דניאל-גונסטון","דניאל-דונטו","דניאל-וייל",
+  "דניאל-זמיר","דניאל-יוסף","דניאל-יטח","דניאל-יפה","דניאל-סאן-קריאף","דניאל-ספיר","דניאל-רובין","דניאלה-בנימין","דניאלה-ספקטור","דניאלה-תורגמן",
+  "דניאלה-תורגמן-2","דף-צונקי","דפנה-ארמוני","דפש-מוד","דצמבר-2021","דקה-דומיה","דקומנטרי","דר-אורי-לוי","דר-גון","דרום-אמריקה",
+  "דרון","דרור-זמיר","דרור-פז","דריה-הבר","דריה-ורד","דרייב-ביי-טראקרס","דרים-פופ","דרך-12","דרכים","דרק-והדומינוס",
+  "דרק-טראקס","האוזן-השלישית","האולין-וולף","האוס","האחיות-ג׳משיד","האחים-אולמן","האחים-בן-עזרא","האחים-כהן","האחים-פדידה","האחים-פורטיס",
+  "האחים-צברי","האמבל-פאי","הארדקור","הארדקור-טראנס","הארדקור-פאנק","הארדקור-פופ","הארי-נילסון","הבוס","הביתה","הבלאק-קיז",
+  "הבלאק-קרואוז","הבלתי-רשמיים","הבסיסטיות","הגל-האדום","הגן-האנוכי","הדבשות","הדורז","הדר-הלל","הדר-זילברשטיין","הדר-פרגון",
+  "הדר-פרג׳ון","הדרה-לוין-ארדי","הודו","הודנא-אורקסטרה","הולד-סטדי","הוסקר-דו","הופעה","הופעה-חיה","הופעות","הופעות-אורח",
+  "הוצאה-מיוחדת","הוצאו-מהקשרם","הוצאות-מיוחדות","הוצאת-ארכיון","הוקויי-זאווסה","הזאבות","הזווית-המקומית","הזיות","החבר-אני","החרגולים",
+  "הי-חזרתי","היחידה-לטיפול-נמרץ","הייא-זעאתרי","הייטק","הייפר־פופ","הילדים-הנוראים","הילה-זהרור","הילה-לויט","הילה-פאר","הילה-רבי",
+  "הילה-רוח","הילה-שגן","הילי-ירון","היפ-הופ","היפ-הופ-אלטרנטיבי","היפ-הופ-ישראלי","היפ-הופ-נשי","היפ_הופ","הכל-חוזר","הלאדו-נגרו",
+  "הלל-גבעון","הלל-סנדר","המכשפות","המסך-הלבן","המפשעות","המצעד-החודשי","המצעד-הלועזי","המצעד-השנתי","המצעד-השנתי-2018","המצעד-השנתי-2020",
+  "המצעד-השנתי-2021","הנביא-ניסים","הנשף","הסיפור-של-פורטיס","הספד","העיר-הזאת","הפה-והטלפיים","הפחדות","הפטיפון","הפטריקים",
+  "הפילמור","הפיראטיות-הפיראטיות","הפלות","הפנר","הפרויקט-של-שי-משולם","הפרויקט-של-שיש-משולם","הצ׳רצ׳ילים","הקולות-הצפים","הקיור","הקינקס",
+  "הקליק","הקצה","הקצה-אפטר-דארק","הקצה-שלי","הרדקור","הרכבים","הרמוניה-דרומית","השמעות-בכורה","השמעת-בכורה","התחנה-המרכזית-החדשה",
+  "ואדים-מכונה","ואלרי-גון","ואלרי-ג׳ון","וו-טאנג","וודסטוק","וויילס","וויל-גונסון","ווילי-נלסון","ווינסטון-צרציל","וורן-היינס",
+  "וורן-זיבון","וייזי","וילקו","וינס-סטייפלס","ויקטוריה-ויליאמס","ויקי","וירוס","ויתרתי","ולנטיינז","ולריוס",
+  "ונקובר","ורד-קלפטר","ושלום","זאב-טנא","זאן-זאק-גולדברג","זאק-אודיאר","זאק-לוי","זהר-לוי","זואי-פולנסקי","זוהר-גינזבורג",
+  "זוהר-פרסקו","זוהרה","זוזו-גינזבורג","זום","זוקה-פרפיניאן","זיבי","זיו","זיו-בראשי","זיו-הרפז","זיו-שליט",
+  "זיו-תדהר","זיכרון","זיכרון-אחר","זיכרונות","זילברטו-זיל","זינוק-לאתמול","זכרון-אחר-2022","זמן","זמר-עברי","זקני-צפת",
+  "חבורת-אטומיק","חברה","חג-שמח","חדוה-עמרני","חוה-אלברשטיין","חווה-אלברשטיין","חוויות","חוזליטו","חול","חול-המועד-סוכות",
+  "חולית-רקורדס","חום","חומר-אפל","חוסר-ביטחון","חורף","חושך","חטאים","חטופים","חי-אפיק","חי-תורן",
+  "חיבוק","חיבורים","חידון","חייזרים","חיים-אחרים","חיים-רומנו","חיים-רחמני","חימום-ריצפתי","חיפה","חירות",
+  "חלב-אב","חלומות","חלל","חן-כהן","חן-לוי","חן-ליטבק","חנהחסיבה","חנוך-לוין","חנוכה","חנן-בן-סימון",
+  "חסד-מקרי","חסיד","חצי-אוטומטי","חצי-פילטר","חצץ","חרסינות","חשש-אמיתי","חתולה-נבלה","טאבו-פלוס","טאונס-ואן-זאנט",
+  "טאטו","טברנק","טדי-נגוסה","טדסקי-טראקס-בנד","טדרוס","טו-באב","טואלט","טובגו","טובה","טובה-גרטנר",
+  "טוד-רנדגרן","טודרס","טוהר-קדוש","טוטמו","טום-בוליג","טום-ווייטס","טום-פטי","טומברלין","טונה","טוני-אלן",
+  "טוניק-קלוניק","טופ-טן","טורי-איימוס","טורקיה","טי-רקס","טיגריס","טיול","טייטו-אלבה","טיילור-הוקינס","טיים-אימפלה",
+  "טים-איסטון","טינה-טרנר","טיפקס","טכנו","טל-אורן","טל-גורדון","טל-גינזבורג","טל-גרינברג","טל-זהר-דוד","טל-טרבלסי",
+  "טל-לוטן","טל-למדן","טל-פוגל","טל-פליישר","טל-פרידמן","טל-רוזנברג","טל-רמון","טל-תמרי","טלוויזיה","טליה-אליאב",
+  "טליה-ישי","טניה-סאלח","טעים","טעם-נרכש","טראנס","טראפיק","טרופיקליה","טרי-פויזן","טריטון","טרייבל",
+  "טרינדד","טרינידד","טרינידד-וטובגו","טריפ-הופ","טריפולי","טרנס","יא-נה","יאיר-יונה","יאיר-רובין","יארדבירדס",
+  "יגאל-בשן","ידידיה-בלחסן","יהוא-ירון","יהודה-עמיחי","יהודה-פוליקר","יהודית-תמיר","יהויכין-פרידלנדר","יהונתן-גפן","יהונתן-דסקל","יהונתן-רם",
+  "יהלי-וייס","יואב-ארבל","יואב-בן-משה","יואב-בן־משה","יואב-חמדני","יואב-טאומן","יואב-תירוש","יואל-רון","יואש","יובב-ארזי",
+  "יובל-אילוז","יובל-בן-דרור","יובל-ברוסילובסקי","יובל-וילנר","יובל-מור-וחלוצי-הפאנק","יובל-מנדלסון","יובל-מעיין","יובל-מעניין","יובל-רון","יובל-רז",
+  "יוגב-גלוסמן","יולי-2021","יולי-2022","יולנטה","יום-האישה-הבינלאומי","יום-הולדת","יום-הזיכרון","יום-הזיכרון-לשואה","יום-המשפחה","יום-הקולנוע",
+  "יום-השואה","יום-כיפור","יום-רביעי","יומולדת","יוני-2022","יוני-בלוך","יוני-בן-טובים","יוני-דויטש","יוני-לבנה","יוני-מירז",
+  "יוני-מריאנר","יוני-רכטר","יונימה","יונצי","יונתן-אבירן","יונתן-בלומנפלד","יונתן-בן-הרוש","יוסי-אלפנט","יוסי-בבליקי","יוסי-בנאי",
+  "יוסי-מזרחי","יוסי-פיין","יופי-תירוש","יורודאנס","יורם-ארבל","יורם-חזן","יורם-טהרלב","יותם-ישי","יזהר-אשדות","ילד-יפה",
+  "ילד-על-ילד","ים","ים-רביב","ים-תיכוני","ימי-ויסלר","ינואר-2021","ינואר-2022","ינואר-2025","ינואר-עד-מרץ-2024","יניב-אלמנך",
+  "יסמין-מועלם","יסמין-רביב","יעל-איזנברג","יעל-את-מגזימה","יעל-דקלבאום","יעל-ופתק","יעל-זלינגר","יעל-לוי","יעל-קופלנד","יעל-קראוס",
+  "יעקב-גלעד","יער-ישראלי","יערה-שאוליאן","יפה-פה","יפית-בק","יפית-טסה","יפן","יפעת-בלסיאנו","יפעת-נץ","יפתח-שפירא",
+  "יצחק-ונטורה","יצחק-קלפטק","יצחק-קלפטר","יציאות-שלא-במקום","ירדן-אבני","ירון-רביד","ירונה-כספי","ירוק","ירושלים","ירח-בבית-8",
+  "ירקות","ירקות-שורש","יש-המון","ישי-ברגר","ישי-גרוס","ישי-קיצלס","ישי-קיצלס-2","ישיב-כהן","ישראל","ישראל-נאש",
+  "ישראל-פורטנוי","ישראלי","ישראלי-חדש","כדורגל","כהן","כוורת","כוח-וידאו","כוכבת-על","כולם-חוץ-ממי-שחסר-שירת-מפונים","כועס",
+  "כינורות","כיף","כיף-באמא-שלי","כל-החתיכים-אצלי","כלייזמר","כליפי","כמה-חמודות-רצח","כמעט-מפורסמים","כן-עיגרת","כן-עיגרת׳",
+  "כנסיית-השכל","כעס","כפיר-צפריר","כצאן-לטבח","כרוקוקלי","כריס-בל","כריס-קורנל","כריס-רובינסון","כריסטמס","כרמלה-גרוס-ואגנר",
+  "כשלפ","לא-כיף","לא-נעים","לא-ספיישל","לאבה-דום","לאה-שבת","לאון-פלדמן","לאון-ראסל","לאונרד-כהן","לב-שבור",
+  "לב-שמש","לבונטין-7","לבן","לבנון","לבנת-בן-חמו","לגנדרי-פינק-דוטס","לד-זפלין","לד-זפלין-3","להיטים","להקות",
+  "להקות-קצב","להתראות-בחלומותי","לו-בארלו","לו-פיי","לו-פיי-2","לו-ריד","לואין-דייויס","לואל-גורג","לוטם-אהרון","לוינסקי",
+  "לונא-אבו-נאסר","לונדון","לוס-בונזורנוס","לוסי-דייקיס","לוסיל-קרו","לוסינדה-ויליאמס","לוקץ","לורה-מרלינג","לורטה-לין","לורי-אנדרסון",
+  "לורן-מילק","לורן-פלד","לותר-דיקינסון","לות׳ר-דיקינסון","לזכר","לטיני","לי-הייזלווד","ליאב-חזקיה","ליאון-ראסל","ליאור-אקרמן",
+  "ליאור-הדר","ליאור-זינגר","ליאור-טבת","ליאור_הדר","ליאם-תורגמן","ליאת-הבר","ליבון-הלם","לידיה-לאבלס","ליז-פייר","ליטל-פיט",
+  "לייב","ליידי-גאגא","ליין-סטיילי","לייקה","ליל-נאז-אקס","לילה","לילי-סיבירד","לין-צוקרט","לינוי-יחיאלי","לינרד-סקינרד",
+  "ליעד-מאיר","ליעד-עיני","לירון-משולם","לכו-מכאן","למה-לבזבז-על-העצב-את-הזמן","למהלא","לנה-דל-ריי","לראות-אותך","לשון-הרע-לה","מ-ר-י",
+  "מאדאם-סוזצקה","מאדר-לאב-בון","מאור-אלוש","מאור-כהן","מאורי-נבו","מאזינים-מאזינות","מאט-קמרון","מאי-2022","מאיה-איזקוביץ","מאיה-אלקולומברה",
+  "מאיה-אמברמובסקי","מאיה-בלזיצמן","מאיה-בן-פזי","מאיה-משעול","מאיה-רגב","מאיו-שבירו","מאיור","מאיכו","מאיקי","מאיר-אריאל",
+  "מאיר-בנאי","מאיר-גולדברג","מאיר-הוברמן","מארוול","מארז","מארזים","מארי-אוצר","מארינה-מקסימיליאן","מארלי","מארק-אולסון",
+  "מארק-בולן","מארק-הוליס","מארק-לאנגן","מארק-לנאגן","מארק-פורד","מארש-דונדורמה","מבוא-הדודאים","מג-ביירד","מגבונים-לחים","מגדלור",
+  "מגזין","מדונה","מדור-פיות","מדינה-מחלה","מדע-בדיוני","מה-הולך-פה","מהדורה-כפולה","מואן","מוות","מוות-לפלסטיק",
+  "מוזות-המטאל","מוזיקה","מוזיקה-אוקראינית","מוזיקה-אלקטרונית","מוזיקה-אפריקאית","מוזיקה-אתיופית","מוזיקה-חדשה","מוזיקה-ישראלית","מוזיקה-ישראלית-חדשה","מוזיקה-מקומית",
+  "מוזיקה-נשית","מוזיקה-ערבית","מוזיקה-פמיניסטית","מוזיקה-קווירית","מוזיקה-קלאסית","מוזיקה-רוסית","מוזיקה-שורשית","מוזיקה-שחורה","מוזיקה_קאריבית","מוזיקה_קריבית",
+  "מוזיקת-עולם","מוזר","מוטי-ביקובסקי","מוטי-פרנסס","מוטי-רודן","מומינים","מוני-אמריליו","מוניקה-סקס","מונסטר","מוסה-נחמיאס",
+  "מוסיקה","מוסיקה-ישראלית","מועדון-האלמונים","מועדונים","מועכי-לב","מופע-הארנבות-של-דר-קספר","מור-לביא","מור-ספורטה","מורה-חיילת","מושון-זר-אביב",
+  "מחאה","מחווה","מחזמר","מחלה","מחשבות","מטאל","מטאל-ישראלי","מיה-זלצר","מיה-יוהנה","מיטל-ולדמן",
+  "מיי-מורנינג-גאקט","מייביס-סטייפלס","מייד-אין-יזראל","מייק-מילס","מייק-מקרידי","מייק-פאטון","מייק-קולי","מייק-קמפבל","מייקל-הארלי","מייקל-סטייפ",
+  "מייקל-צפמן","מייקל-קיוואנוקה","מייקל-קרונין","מיכאל-גוטליב","מיכאל-וקנין","מיכאל-מושונוב","מיכה-ביטון","מיכל-גולדשטיין","מיכל-דר","מיכל-ויינשטוק",
+  "מיכל-רוזנטל","מימי-פארקר","מינוס-אפס","מינימל-קומפקט","מיניסייקפסט","מינסוטה","מיצקי","מיק-גאגר","מיק-ג׳אגר","מיקה-דוארי",
+  "מיקה-טל","מיקה-קרני","מיקה-שדה","מיקי-גבריאלוב","מיקי-שביב","מיקסטייפ","מיקסמונסטר","מירב-איסר","מירב-הלינגר","מירב_איסר",
+  "מיתולוגיה","מיתר","מלחמה","מלחמת-הכוכבים","מלך-אפס","מלכה-שפיגל","מנגינות","מנגיסטו","מנדט","מנוחה",
+  "מני-גרוס","מסוק","מסיבה","מסיבות-טבע","מסיבת-האזנה","מסילת-ישרים","מעיין-לובן","מעיין-צדקה","מעניש","מערבון",
+  "מצב-רוח","מצעד","מצעד-העשור","מצעד-חודשי","מצעד-שבועי","מצעד-שנתי","מקומי","מקסיקו","מרגו-פרייס","מרגי",
+  "מרי-לטימור","מריאן-פיית׳פול","מריסה-נדלר","מריקה-הקמן","מרכז-ענב","מרסדס-בנד","מרף","מרץ-2021","מרץ-2022","מרקורי-רב",
+  "משה-אוחיון","משוררים","משי-קליינשטיין","משינה","מתאבל-ללא-קץ","מתי-גלעד","מתי-כספי","מתן-אפרת","מתן-בר","מתן-שרון",
+  "נאו-סול","נאו-פולק","נאו-קלאסי","נבו-שיראזי","נברסקה","נגה-ארז","נגה-שלו","נדב-הולנדר","נדב-זילברשטיין","נדב-מלמן",
+  "נדב-רביד","נדב-שפיגל","נו-ווייב","נו-פוינט-בייבי","נובה","נובלטי","נובמבר-2021","נוגה","נוודי-האוכף","נויה-סול",
+  "נויה-עדר","נויז","נויז-פופ","נומוק","נומקה","נונו","נוסטלגיה","נוספרטו","נועה-אברבנאל","נועה-ארגוב",
+  "נועה-בנתור","נועה-ברודצקי","נועה-קירל","נועה-שמר","נועם-בסון","נועם-דורון","נועם-סדן","נועם-עמית","נועם-ענבר","נועם-צוריאלי",
+  "נוער-בתול","נופר-תום","נורה-גונס","נורה-ג׳ונס","נורוז","נורית-הירש","נושאי-המגבעת","נח-אנגלהרד","נחל-רוה","נחמה",
+  "נחשים-עם-רגליים","נטע-ברזילי","נטע-וינר","נטפליקס","ניב-ארזי","ניו-אייג","ניו-ווייב","ניו-וייב","ניו-יורק-דולז","ניינטיז",
+  "נייס","ניל-יאנג","ניל-פירט","ניל-קאסל","נינה-סימון","נינט-טייב","ניסים-בלאק","ניצן-ורדי","ניצן-לוי","ניצן-נחומזון",
+  "ניצן-פינקו","ניצן-קולקו","ניק-דרייק","ניק-קייב","ניקו-קייס","ניר-טרטר","ניר-מטרסו","ניר-ממון","ניר-שלמה","נירו",
+  "נישתי","נכי-נאצה","נלי-פולי","נמי-מלומד","נמרוד-לב","נמרי-נייר","ננסי-סינטרה","נסטיה-רוד","נסתרים","נעה-סגל",
+  "נעים","נעם-אבידור","נעם-רותם","נעמה-גוגנהיים","נעמה-שטרית","נעמי-דהן","נעמי-חשמונאי","נעמי-ייבין","נעמי-שמר","נערות-ריינס",
+  "נצטרף-לעדר","נצרות","נקודותיים","נקודת-חן","נקודתיים","נקמת-הטרקטור","נשים","נשמה","נתי_חסיד","נתן-אלרתמן",
+  "נתן-ברנד","נתן-זך","נתן-מקיי","נתן-סלור","סאבו","סאבווי-סאקרס","סאונד-סיסטם","סאונד_סיסטם","סאונדגארדן","סאני-וור",
+  "סארטר","סבא-אורי","סבבה-5","סבבה-גמור","סבנטיז","סגול-59","סגר","סדרה","סדרני-הדשא","סדרת-אלה-פוגצובה",
+  "סוג-ב","סווטו","סוויסה","סוזן-טדסקי","סוכות","סול","סולו","סולפול","סוס-יאור","סוס-מביט",
+  "סוספריה","סוף-עונת-התפוזים","סופר-גרופ","סופרגרופס","סוקה","סזריה-אבורה","סחיטה-רגשית","סט","סטאר-טרק","סטון-גוסארד",
+  "סטונר","סטיב-אלביני","סטיב-ארל","סטיב-וינווד","סטיב-רייך","סטיבי-וונדר","סטיבן-סטילס","סטיות-של-פינגווינים","סטלה-גוט","סטן-לי",
+  "סטרגיל-סימפסון","סי-היימן","סיאטל","סיוון-רובין","סיון-טלמור","סיון-לוי","סיון-לנגר","סיון-צוף-דהן","סיון-רובין","סיטי-פופ",
+  "סיימון-וגרפונקל","סייקיק-טיוי","סיכום","סיכום-2018","סיכום-2019","סיכום-2020","סיכום-2021","סיכום-2022","סיכום-2023","סיכום-2024",
+  "סיכום-2025","סיכום-העשור","סיכום-השנה","סיכום-חודש","סיכום-חצי-שנה","סיכום-חצי-שנתי","סיכום-שנה","סיכום-שנה-2018","סיכום-שנה-2020","סיכום-שנתי",
+  "סיכום-שנתי-2021","סיכום-תשפ״ג","סיכומי-שנה","סילבי-זאן","סילבי-ז׳אן","סילבסטר","סילברדון","סימה-נון","סימון-וגרפונקל","סינגלס",
+  "סינגר-סונגרייטר","סינת-וייב","סינת-פופ","סינתיסייזרים","סינתפופ","סיפור-אחר","סיפורים","סיפורים-מהקופסא","סיקור-קריירה","סיקסטיז",
+  "סירנות","סלאדג","סלומה","סלון-קורטינה","סלט-גרוב","סלט_גרוב","סלימפים","סמי-בירנבך","סמירה-סרייה","סמיתס",
+  "ספוטיפיי","ספוטניק-היי-פיי","ספוקן-וורד","ספטמבר-2021","ספטמבר-2022","ספי-ציזלינג","ספיישל","ספיר-וולך","ספר-האקורדים-האלטרנטיבי","ספר-האקורדים-האלטרנטיבי-2021",
+  "סקא","סקס-סמים-ופלסטין","סקסופון","סקרלט-ריברה","סרט","סרטים","סרטים-בשחור-לבן","סשה-בקמן","סתו-בן-שחר","סתיו",
+  "סתיו-בגר","סתיו-צימרמן-פולק","עבדות","עבודה-זמנית","עבודות-עפר","עברי","עברית","עבריתפופ","עגמומיות","עדי-אגאי",
+  "עדי-אולמנסקי","עדי-קשת-כהן","עדי-קשת-כהן-2","עדי-שורק","עדי-שחם","עדי-תשרי","עדיאל-גולדמן","עדן-אטד","עדן-דרסו","עדן-עטיה",
+  "עוז-זהבי","עוזאל","עוזי-נבון","עוזי-רמירז","עוטף-עזה","עולם","עולם-יענו","עומק-הארובה","עומר-ברנד","עומר-מוסקוביץ",
+  "עומר-מושקוביץ","עומר-נצר","עומר-רביד","עומר-שונברגר","עומרי-סמדר","עומרי-קאופמן","עומרי-שני","עונג-שבת","עופר-טיסר","עופר-נחשון",
+  "עידו-בנימיני","עידו-זיגו-אופק","עידו-מימון","עידו-שדה","עידן-שלום","עילי-אשדות","עילי-סהר","עיליי-אשדות","עינב-דהרי","עינב-הר-ענן",
+  "עינן-פירל","עירית-דקל","עירית-רוז-שרון","על-המשמרת","על-העץ","עלמה-גוב","עמיר-לב","עמית-איצקר","עמית-בויום","עמית-פוזננסקי",
+  "עמית-פולק","עמיתקס","עמנואל","עמנואל-והכיסופים","עמרי-אמדו","עמרי-גלוזמן","עמרי-נובל-והאצילים","עמרי-קרן","ענבל-פרלמוטר","ענבר-מיליקובסקי",
+  "ענת-דרימר","ענת-חיטמן","ענת-מושקובסקי","ענת-פורט","עצבני-ומהיר","עצוב","עצמאות-2026","עצמאי","ערב-יום-העצמאות-שירים-בעברית-אולדיז","ערבית",
+  "ערן-צור","ערק-לימונים","עשו-לנו-את-החודש","עשור","עשור-לקצה","עתידני","פ-אנק","פאוור-פופ","פאט-גארט","פאנק",
+  "פאנק-נשי","פאנק-רוק","פאנקי","פברואר-2021","פברואר-2022","פו-פייטרס","פודקאסט","פוטו-מריאנה","פול-סיימון","פול-קוסוף",
+  "פוליאנה-פרנק","פוליטיקה","פולק","פולק-אלקטרוני","פולק-גאז","פולק-ישראלי","פולק-מוזר","פולק-רוק","פונץ׳","פוסט-הארדקור",
+  "פוסט-מוות","פוסט-מטאל","פוסט-מצעד","פוסט-פאנק","פוסט-רוק","פופ","פופ-יפני","פופ-ישראלי","פופ-רוק","פופ-תזמורתי",
+  "פופ־פאנק","פופס-סטייפלס","פורטיס","פורטיס-משולש","פורטיסחרוף","פורים","פורקי-עול","פטי-סמית","פטל","פטריק-סבג",
+  "פטריק_קים","פטרסון-הוד","פיאמנטה","פיבי-ברידגרס","פיבר-ריי","פיוזן","פיונה-אפל","פיות","פיות-נורדיות","פיזיקל-גרפיטי",
+  "פיט-טאונסנד","פיטר-באק","פיטר-גבריאל","פיטר-גרין","פיטר-פרט","פיטר-פרמפטון","פיי-שפירו","פייבוריטיים","פיל-ספקטור","פילגש",
+  "פילים","פיליפ-זדאר","פינת-המסטדון","פיצה","פיתקית","פלא-אוזן","פלג","פלג-קראפט","פלד","פלה-קוטי",
+  "פלוטניק","פלונטר","פלורה","פליטווד-מק","פליטים","פלייליסט","פלמנקו","פמיניזם","פנחס-ובניו","פנים",
+  "פסח","פסטיבל-גרזן","פסטיבל-דוקאביב","פסטיבל-המגבר","פסטיבל-הפסנתר","פסטיבל-חשיפה-בינלאומית","פסטיבל-טראנס","פסטיבל-ירושלים","פסטיבל-מונטרה","פסטיבל-פרימוורה-2022",
+  "פסטיבלים","פסיכדליה","פסיכדליה-טורקית","פסיכדליה-עדינה","פסנתר","פסקול","פסקולים","פעם-ביום","פעמון-למרד","פרד-ניל",
+  "פרו","פרוגרסיב","פרודיגי","פרופסור-קוף","פרידה","פרינס","פרינציפ","פריסטייל","פריק-פולק","פרל-גאם",
+  "פרל-ג׳אם","פרנסיס","פרנסיסקה-ולנצואלה","פרנק-טרנר","פרנש-האוס","פ׳אנק","צאק-ברי","צארלי-ווטס","צבא-של-מכשפות","צביקה-פורס",
+  "צביקה-פיק","צונה","צוף","צוף-זוהר-ענבל","צוק-דבוסק","צוקוש","צח-אור-שמרוני","צח-דרורי","צח-הלוי","צטני",
+  "ציל","ציל-פיל","צלחת-אחת","צליין","צליל-אברהם","צליל-דנין","צלילה","צלילי-הכרם","צלילי-המוסיקה","צרחות",
+  "צרלי-דניאלס","צרלי-מגירה","צרפת","צ׳ילי-גונזלס","קאברים","קאט-פאוור","קאמבק","קאמי","קאמי-מלץ","קאנטר",
+  "קאנטרי","קאנטרי-פולק","קאנטרי-רוק","קאריבי","קאריביט","קארין-אופיר","קארן-דלטון","קאשי","קוב","קובארי",
+  "קובי-ליליאן","קובי-רכט","קוואמי","קווין-מורבי","קווירקור","קוונטין-טרנטינו","קוזמיק-אמריקן-מיוזיק","קולאז","קולומביה","קוליפון",
+  "קולנוע","קולנוע-דוקומנטרי","קולנוע-יפני","קולנוע-ישראלי","קולנוע-צרפתי","קולנוע-תיעודי","קומביה","קונגו","קוסטה-קפלן","קוראים-קוראות",
+  "קורדרוי","קורונה","קורט-וייל","קורטני-ברנט","קורטני-מארי-אנדרוז","קורין-אלאל","קותימאן","קותימן","קיבוץ","קיור",
+  "קייט-בוש","קייטי-קראצפילד","קייטנו-ולוזו","קייפופ","קים-גורדון","קיץ","קיקי-מלינקי","קית-ריצרדס","קלאב","קלאב-לימבו",
+  "קליפסו","קמה-ורדי","קמילה","קמרון-קרואו","קנדה","קנדריק-לאמאר","קנייה-ווסט","קסן","קקי","קר",
+  "קר-לי","קראוט-רוק","קראוטרוק","קרול-קינג","קרולינה","קרוסבי-סטילס-נאש-יאנג","קריבי","קריביט","קרייג-פין","קרייזי-הורס",
+  "קריירת-סולו","קרים","קריס-קריסטופרסון","קרן-אור","קרן-אטינגר","קרן-הדר","קרן-ותמוז","קרן-טננבאום","קרנבל","קרני-פוסטל",
+  "קתלין-אדוארדס","ראב-א-דאב","ראב_א_דאב","ראגאמופין","ראגאמפין","ראיון","ראיין-אדאמס","ראנקין-לוי","ראנקין_לוי","ראפ",
+  "ראפ-אלטרנטיבי","ראפו-אוהד","ראש-בלטה","רביד-פלוטניק","רבע-לאפריקה","רבקה-זוהר","רגאטון","רגאי","רגאיי","רגי",
+  "רגל-סברס","רגע-דל","רגש","רד-אקסס","רדיו","רדיו-בגדד","רדיוהד","רובי-רוברטסון","רוברט-האנטר","רוברט-סמית",
+  "רוברט-פורסטר","רוברט-פלנט","רוגל-אלפר","רוגע","רוג׳ר-מקגווין","רודי-קיסלר","רווי-שמש","רוח-באה-מדרום","רויסון","רוית-סלמון",
+  "רולינג-סטונס","רומי-מור","רון-בונקר","רון-סיקרון","רון-עשהאל","רון_לוי_אריה","רונה-קינן","רוני-אלטר","רוני-בר-הדס","רוני-דואני",
+  "רוני-הוקינס","רוני-טל","רוני-ידידיה","רוני-ליין","רוני-פיאלקוב","רונית-ברגמן","רונית-רוזנטל","רונן-בן-טל","רונן-ללנה","רונן-סאבו",
+  "רונן-רוזנר","רוסליה","רועי-אביטל","רועי-דורון","רועי-חסן","רועי-חרמון","רועי-טרגן","רועי-כפרי","רועי-ניצני","רועי-פודים",
+  "רועי-פרייליך","רועי-ציקי-ארד","רועי-צמח","רוק","רוק-אלטרנטיבי-ישראלי","רוק-דרומי","רוק-יהודי","רוק-יפני","רוק-ישראלי","רוק-מהמדבר",
+  "רוק-פסיכדליה","רוקבילי","רוקי-אריקסון","רוקנרול","רוקסטדי","רוקפור","רוקרפוקטס","רורי-גלאגר","רות-דלורס-וייס","רות-דנון",
+  "רות-שועלי","רותי-שטרן","רותם-אור","רותם-בר-אור","רותם-פרימר","רותם-שפרן","רז-פרסטן","רחל-ירון","רטרו-סול","ריאיון",
+  "ריגויסר","ריהנון-גידנס","ריוט","ריטה","ריי-למונטיין","ריי-קודר","ריילו-קיילי","ריילי-גייל","רייסקינדר","רייש",
+  "רים-בנא","ריפלייסמנטס","ריץ-רובינסון","ריצארד-מנואל","ריצרד-באקנר","ריצ׳רד-באקנר","ריצ׳רד-מנואל","ריק-דאנקו","ריק-רובין","ריקי-גל",
+  "רכבות","רלוונטיות","רם-אוריון","רמי-וולף","רמי-פורטיס","רן-גיל","רן-טימור","רן-יגיל","רן-סיקרון","רני-מגידו",
+  "רננה-נאמן","רסקו","רעות-תימור","רענן-פוגל","רעש","רעש-רקורדס","רפאל-כהן","רפי","רץ-על-הקצה","רקמות",
+  "רשת-ג","רתם-שפרן","שאול-מרגלית","שאזאמאט","שאיי-אנטי","שאנן-סטריט","שבועות","שביט-נוי","שבלול","שבעה-באוקטובר",
+  "שבת","שב״ק-ס׳","שדונים","שדיים-למעלה","שדרניות","שדרנים","שוב-אני","שוברי-לב-קטנים","שוגייז","שוורצמן",
+  "שוזין","שוטר-פושע-והענק-הלוחש","שולה-חן","שולי-רנד","שולץ","שורפי","שז","שחר-אבן-צור","שחר-בר","שחר-גוטמן",
+  "שחר-זלצמן","שחר-טבוך","שחר-יוסף","שחר-לוי","שחר-רייס","שחר-שריג","שי-טרא-ליטמן","שי-מרק","שי-משה-משה","שי-נובלמן",
+  "שי-סול","שי-צברי","שיטפון","שייגעצ","שינייד-אוקונור","שיער","שיקגו","שיקו-סיני","שיר-אלוני","שיר-החולה-השמח-גולדמן",
+  "שיר-העשור-שלי","שיר-קביליס","שיר-שושן","שיר-שקיעה","שירה","שירה-אל-עמי","שירה-גבריאלוב","שירה-ויזל","שירה-נעמי-דרדיקמן","שירוטו",
+  "שירי-אדר","שירי-העשור","שירי-השנה","שירי-ילדים","שירי-ירח","שירי-משוררים","שירי-עזר","שירי-רוזן","שירי-שנה","שירים",
+  "שירים-ארוכים","שירים-חדשים","שירים-שקטים","שירן-קוזניצקי","שישי-שבת","שלום-גד","שלום-חנוך","שלומי-ברכה","שלומי-מנצור","שלומי-קנדל",
+  "שלומי-שבן","שלי-ארצר","שלי-ארצ׳ר","שלי-לוי","שלי-שרון","שלישי","שם-טוב-לוי","שמואל-זלצר","שמיע","שמעו-את-התכנית-שלו",
+  "שמעון-אדף","שמעון-טל","שן","שנה","שנה-למלחמה","שנות-האלפיים","שנות-הקסם","שנות-השבעים","שנות-השמונים","שנות-התשעים",
+  "שני-חיון","שני-פלג","שנת-החתול","שפי-ישי","שקד-מוכיח","שקד-מילר","שר-ניב","שרה-גארוז","שרה-ג׳ארוז","שרה-ווטקינס",
+  "שרה-מארי-צדוויק","שרוכים","שרון-הולצמן","שרון-ואן-אטן","שרון-טובה-לוי","שרון-קנטור","שרית-שצקי","שתיקת-האדמה","תאמר-נאפר","תדר",
+  "תהילה-אוזן","תהילה-נקב","תוכנית-פרידה","תולדות-הכותרת","תום-הררי","תום-יורק","תום-פרידמן","תום-ראש","תום-שנאן","תומר-בן-אפרים",
+  "תומר-ברוך","תומר-גרשנמן","תומר-ישעיהו","תומר-קופר","תומר-קריב","תזמורת-הצעצועים-של-איגור-קרוטוגולוב","תחושות","תחנות-מרכזיות","תיאטרון","תימני",
+  "תכנית-אחרונה","תכנית-חזרה","תכנית-מס-פאקין-500","תמוז","תמוז-דקל","תמיר-בר","תמיר-קרן","תמר-אייזנמן","תמר-אפק","תמר-חזנובסקי",
+  "תמר-לינדר","תמר-קפסוטו","תמראדה","תמרדה","תספורת","תפילה","תקווה","תקליטים","תרבות-של-סולידריות","תרסטון-מור",
+  "תשעט"
+];
 const STORE = {
   myShows:    "kzradio.shows.v2",          // { [slug]: { name, image, episodeCount, lastFetched } }
   epPrefix:   "kzradio.episodes.v2.",       // + slug -> [episode, ...]
@@ -365,16 +880,25 @@ const state = {
   selectedShowSlug: null,
   selectedEpisodePermalink: null,
 
+  browseMode: "show",
+  selectedTagSlug: null,
+  tagEpisodes: {},
+  tagLoading: {},
+  tagError: {},
+
   showQuery: "",
   epQuery: "",
+  tagQuery: "",
   showFavOnly: false,
   epFavOnly: false,
 
   // ephemeral UI
   showActive: -1,
   epActive: -1,
+  tagActive: -1,
   showOpen: false,
   epOpen: false,
+  tagOpen: false,
 };
 
 function update(patch, persist = {}) {
@@ -630,6 +1154,78 @@ async function fetchShow(slug) {
   }
 }
 
+async function fetchTag(tagSlug) {
+  if (!tagSlug || state.tagLoading[tagSlug]) return;
+  update({ tagLoading: { ...state.tagLoading, [tagSlug]: true }, tagError: { ...state.tagError, [tagSlug]: null } });
+  try {
+    const baseFeed = `${BASE}/tag/${encodeURIComponent(tagSlug)}/feed/`;
+    const all = []; const seen = new Set();
+    for (let page = 1; page <= 50; page++) {
+      const u = page === 1 ? baseFeed : `${baseFeed}?paged=${page}`;
+      let xml;
+      try { xml = await (await fetchViaProxy(u)).text(); }
+      catch (e) { if (page > 1) break; throw e; }
+      let parsed;
+      try { parsed = parseRss(xml); }
+      catch (e) { if (page > 1) break; throw e; }
+      if (!parsed.items.length) break;
+      let added = 0;
+      for (const it of parsed.items) {
+        const k = it.permalink || it.mp3;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        const m = (it.permalink || "").match(/\/shows\/([^/?#]+)\//);
+        all.push({ ...it, _slug: m ? m[1] : "" });
+        added++;
+      }
+      if (!added) break;
+      if (state.selectedTagSlug === tagSlug) render();
+    }
+    if (!all.length) throw new Error("no episodes found for this tag");
+    update({ tagEpisodes: { ...state.tagEpisodes, [tagSlug]: all }, tagLoading: { ...state.tagLoading, [tagSlug]: false } });
+  } catch (e) {
+    update({ tagLoading: { ...state.tagLoading, [tagSlug]: false }, tagError: { ...state.tagError, [tagSlug]: e.message || String(e) } });
+  }
+}
+
+function selectTag(slug) {
+  update({ selectedTagSlug: slug, tagOpen: false, tagActive: -1, tagQuery: "",
+           selectedEpisodePermalink: null, epQuery: "" });
+  if (slug && !state.tagEpisodes[slug] && !state.tagLoading[slug]) {
+    fetchTag(slug);
+  } else {
+    render();
+  }
+}
+
+function switchMode(mode) {
+  update({ browseMode: mode, tagQuery: "", showQuery: "", tagOpen: false, showOpen: false,
+           selectedEpisodePermalink: null, epQuery: "" });
+  $("showModeBox").hidden = mode !== "show";
+  $("tagModeBox").hidden  = mode !== "tag";
+  $("showFavBtn").style.display = mode === "show" ? "" : "none";
+  $("modeShowBtn").classList.toggle("active", mode === "show");
+  $("modeTagBtn").classList.toggle("active",  mode === "tag");
+  render();
+}
+
+function filteredTags() {
+  const q = state.tagQuery.trim().toLowerCase();
+  if (!q) return [];
+  return ALL_TAGS.filter(t => t.toLowerCase().includes(q)).slice(0, 100);
+}
+
+function filteredTagEpisodes(tagSlug) {
+  let list = state.tagEpisodes[tagSlug] || [];
+  const q = state.epQuery.trim().toLowerCase();
+  if (q) list = list.filter(e => {
+    const showName = state.myShows[e._slug]?.name || e._slug || "";
+    return (e.title || "").toLowerCase().includes(q) || showName.toLowerCase().includes(q);
+  });
+  if (state.epFavOnly) list = list.filter(e => !!state.favEps[e.permalink]);
+  return list;
+}
+
 function loadEpisodesFromCacheIfNeeded(slug) {
   if (!slug) return;
   if (state.episodes[slug]) return;
@@ -735,10 +1331,9 @@ function setMediaSession(ep, showMeta) {
 }
 
 function stepEpisode(delta) {
-  // Walk the same list the user is currently viewing (which may be the
-  // current show's episodes OR the all-cached aggregate when no show
-  // is selected).
-  const eps = filteredEpisodes(state.selectedShowSlug);
+  const eps = state.browseMode === "tag" && state.selectedTagSlug
+    ? filteredTagEpisodes(state.selectedTagSlug)
+    : filteredEpisodes(state.selectedShowSlug);
   const idx = eps.findIndex(e => e.permalink === state.selectedEpisodePermalink);
   if (idx < 0) return;
   const next = eps[idx + delta];
@@ -824,19 +1419,28 @@ function allEpisodes(slug) {
 }
 
 function findEpisodeWithMeta(permalink) {
-  // Prefer the selected show; otherwise scan everything cached.
-  const tryIn = slug => {
-    const eps = state.episodes[slug] || [];
-    const ep = eps.find(e => e.permalink === permalink);
-    if (ep) return { ep, slug, showMeta: state.myShows[slug] };
-    return null;
+  const tryInList = (list, slug) => {
+    const ep = list.find(e => e.permalink === permalink);
+    if (!ep) return null;
+    const s = slug || ep._slug || "";
+    return { ep, slug: s, showMeta: state.myShows[s] };
   };
-  if (state.selectedShowSlug) {
-    const got = tryIn(state.selectedShowSlug);
+  // Tag mode: search tag episodes first
+  if (state.browseMode === "tag" && state.selectedTagSlug) {
+    const got = tryInList(state.tagEpisodes[state.selectedTagSlug] || [], null);
     if (got) return got;
   }
-  for (const slug of Object.keys(state.episodes)) {
-    const got = tryIn(slug);
+  if (state.selectedShowSlug) {
+    const got = tryInList(state.episodes[state.selectedShowSlug] || [], state.selectedShowSlug);
+    if (got) return got;
+  }
+  for (const [slug, eps] of Object.entries(state.episodes)) {
+    const got = tryInList(eps, slug);
+    if (got) return got;
+  }
+  // Fallback: any tag episode cache
+  for (const eps of Object.values(state.tagEpisodes)) {
+    const got = tryInList(eps, null);
     if (got) return got;
   }
   return null;
@@ -889,8 +1493,13 @@ const $ = id => document.getElementById(id);
 
 function render() {
   renderStatus();
-  renderShowDropdown();
-  renderShowSelected();
+  if (state.browseMode === "tag") {
+    renderTagDropdown();
+    renderTagSelected();
+  } else {
+    renderShowDropdown();
+    renderShowSelected();
+  }
   renderEpFilterButton();
   renderEpDropdown();
   renderEpSelected();
@@ -1068,22 +1677,84 @@ function renderShowSelected() {
   });
 }
 
+// ---- tag dropdown + selected ----
+
+function renderTagDropdown() {
+  const ul = $("tagDropdown");
+  ul.innerHTML = "";
+  ul.hidden = !state.tagOpen;
+  if (!state.tagOpen) return;
+  const tags = filteredTags();
+  if (!state.tagQuery.trim()) {
+    const li = document.createElement("li"); li.className = "empty";
+    li.textContent = "Start typing to search tags…";
+    ul.appendChild(li); return;
+  }
+  if (!tags.length) {
+    const li = document.createElement("li"); li.className = "empty";
+    li.textContent = "No matching tags.";
+    ul.appendChild(li); return;
+  }
+  const q = state.tagQuery.trim();
+  tags.forEach((tag, i) => {
+    const li = document.createElement("li");
+    if (i === state.tagActive) li.classList.add("active");
+    li.innerHTML = `<span class="label">${highlight(tag, q)}</span>`;
+    li.addEventListener("mousedown", e => e.preventDefault());
+    li.addEventListener("click", () => selectTag(tag));
+    ul.appendChild(li);
+  });
+}
+
+function renderTagSelected() {
+  const div = $("showSelected");
+  const tagSlug = state.selectedTagSlug;
+  if (!tagSlug) {
+    div.classList.add("placeholder");
+    div.innerHTML = "Search and pick a tag above to browse its episodes.";
+    return;
+  }
+  div.classList.remove("placeholder");
+  const loading = state.tagLoading[tagSlug];
+  const err = state.tagError[tagSlug];
+  const eps = state.tagEpisodes[tagSlug] || [];
+  div.innerHTML = `
+    <div class="show-title">
+      <strong>${escapeHtml(tagSlug)}</strong>
+      ${loading ? `<span class="spinner"></span>` : ""}
+    </div>
+    ${err ? `<div class="show-meta err">${escapeHtml(err)}</div>` : ""}
+    ${eps.length ? `<div class="show-meta">${eps.length} episodes${loading ? " so far…" : ""}</div>` : ""}
+    ${eps.length ? `<div class="actions"><button id="tagRandomBtn" class="primary">🎲 Random</button></div>` : ""}
+  `;
+  div.querySelector("#tagRandomBtn")?.addEventListener("click", () => {
+    if (!eps.length) return;
+    selectEpisode(eps[Math.floor(Math.random() * eps.length)].permalink, { play: true });
+  });
+}
+
 // ---- episode dropdown ----
 
 function renderEpFilterButton() {
-  const slug = state.selectedShowSlug;
-  const haveEps = slug
-    ? (state.episodes[slug]?.length || 0) > 0
-    : totalCachedEpisodes() > 0;
+  let haveEps;
+  if (state.browseMode === "tag") {
+    haveEps = (state.tagEpisodes[state.selectedTagSlug]?.length || 0) > 0;
+  } else {
+    const slug = state.selectedShowSlug;
+    haveEps = slug ? (state.episodes[slug]?.length || 0) > 0 : totalCachedEpisodes() > 0;
+  }
   $("epFavBtn").disabled = !haveEps;
   $("epFavBtn").classList.toggle("on", state.epFavOnly);
   $("epInput").disabled = !haveEps;
   if (!haveEps) $("epInput").value = "";
-  // give a hint about the current scope
-  $("epInput").placeholder = slug
-    ? "חיפוש פרקים / Search…"
-    : (haveEps ? `Search across ${totalCachedEpisodes()} cached episodes…` : "חיפוש פרקים / Search…");
-
+  if (state.browseMode === "tag") {
+    $("epInput").placeholder = state.selectedTagSlug ? "Search tag episodes…" : "Pick a tag first";
+  } else {
+    const slug = state.selectedShowSlug;
+    $("epInput").placeholder = slug
+      ? "חיפוש פרקים / Search…"
+      : (haveEps ? `Search across ${totalCachedEpisodes()} cached episodes…` : "חיפוש פרקים / Search…");
+  }
   $("showFavBtn").classList.toggle("on", state.showFavOnly);
 }
 
@@ -1092,6 +1763,55 @@ function renderEpDropdown() {
   ul.innerHTML = "";
   ul.hidden = !state.epOpen;
   if (!state.epOpen) return;
+
+  // TAG MODE
+  if (state.browseMode === "tag") {
+    const tagSlug = state.selectedTagSlug;
+    if (!tagSlug) {
+      const li = document.createElement("li"); li.className = "empty";
+      li.textContent = "Pick a tag first.";
+      ul.appendChild(li); return;
+    }
+    if (state.tagLoading[tagSlug] && !(state.tagEpisodes[tagSlug]?.length)) {
+      const li = document.createElement("li"); li.className = "empty";
+      li.innerHTML = `<span class="spinner"></span><span>Loading tag episodes…</span>`;
+      ul.appendChild(li); return;
+    }
+    if (state.tagError[tagSlug] && !state.tagEpisodes[tagSlug]?.length) {
+      const li = document.createElement("li"); li.className = "empty";
+      li.innerHTML = `<span class="err">${escapeHtml(state.tagError[tagSlug])}</span>`;
+      ul.appendChild(li); return;
+    }
+    const items = filteredTagEpisodes(tagSlug);
+    if (!items.length) {
+      const li = document.createElement("li"); li.className = "empty";
+      li.textContent = state.epFavOnly ? "No starred episodes for this tag." : "No episodes match.";
+      ul.appendChild(li); return;
+    }
+    const q = state.epQuery.trim(); const max = 300;
+    for (let i = 0; i < items.length && i < max; i++) {
+      const ep = items[i]; const li = document.createElement("li");
+      if (i === state.epActive) li.classList.add("active");
+      const fav = !!state.favEps[ep.permalink];
+      const datePrefix = ep.date ? `${ep.date} · ` : "";
+      const showName = state.myShows[ep._slug]?.name || ep._slug || "";
+      const img = ep.image || state.myShows[ep._slug]?.image;
+      li.innerHTML = `
+        ${img ? `<img class="avatar" src="${escapeAttr(img)}" alt="" loading="lazy" />` : `<span class="avatar ph"></span>`}
+        <span class="label">${fav ? "★ " : ""}${highlight(datePrefix + (ep.title || "(untitled)"), q)}</span>
+        ${showName ? `<span class="meta">${escapeHtml(showName)}</span>` : ""}
+      `;
+      li.addEventListener("mousedown", e => e.preventDefault());
+      li.addEventListener("click", () => selectEpisode(ep.permalink));
+      ul.appendChild(li);
+    }
+    if (items.length > max) {
+      const li = document.createElement("li"); li.className = "empty";
+      li.textContent = `${items.length - max} more — keep typing.`;
+      ul.appendChild(li);
+    }
+    return;
+  }
 
   const slug = state.selectedShowSlug;
 
@@ -1162,8 +1882,27 @@ function renderEpDropdown() {
 
 function renderEpSelected() {
   const div = $("epSelected");
-  const slug = state.selectedShowSlug;
   const permalink = state.selectedEpisodePermalink;
+
+  // TAG MODE: no-episode placeholder
+  if (state.browseMode === "tag" && !permalink) {
+    div.classList.add("placeholder");
+    const tagSlug = state.selectedTagSlug;
+    const eps = state.tagEpisodes[tagSlug] || [];
+    if (tagSlug && state.tagLoading[tagSlug] && !eps.length) {
+      div.innerHTML = `<span class="spinner"></span> Loading tag episodes…`;
+    } else if (tagSlug && eps.length) {
+      div.innerHTML = `Pick an episode above.`;
+    } else if (!tagSlug) {
+      div.innerHTML = "Pick a tag first.";
+    } else {
+      div.innerHTML = "No episodes for this tag.";
+    }
+    return;
+  }
+
+  // In tag mode treat as "browse-all" so the show link appears and stale selectedShowSlug is ignored
+  const slug = state.browseMode === "tag" ? null : state.selectedShowSlug;
   const totalCached = totalCachedEpisodes();
 
   // Loading a specific show
@@ -1341,9 +2080,35 @@ function wireCombobox(which) {
 
 $("showFavBtn").addEventListener("click", () => update({ showFavOnly: !state.showFavOnly }));
 $("epFavBtn").addEventListener("click",   () => update({ epFavOnly:   !state.epFavOnly }));
+$("modeShowBtn").addEventListener("click", () => switchMode("show"));
+$("modeTagBtn").addEventListener("click",  () => switchMode("tag"));
 
 wireCombobox("show");
 wireCombobox("ep");
+
+// Tag combobox
+(function wireTagCombobox() {
+  const input = $("tagInput");
+  input.addEventListener("focus", () => update({ tagOpen: true }));
+  input.addEventListener("blur",  () => setTimeout(() => update({ tagOpen: false }), 150));
+  input.addEventListener("input", () => update({ tagQuery: input.value, tagOpen: true, tagActive: -1 }));
+  input.addEventListener("keydown", e => {
+    const list = filteredTags();
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      update({ tagActive: Math.min(list.length - 1, state.tagActive + 1), tagOpen: true });
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      update({ tagActive: Math.max(0, state.tagActive - 1) });
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const tag = list[state.tagActive] ?? (state.tagQuery.trim() || null);
+      if (tag) { selectTag(tag); input.value = tag; }
+    } else if (e.key === "Escape") {
+      input.blur();
+    }
+  });
+})();
 
 // service worker
 if ("serviceWorker" in navigator) {
