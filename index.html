@@ -843,7 +843,7 @@ const STORE = {
   epPrefix:   "kzradio.episodes.v2.",       // + slug -> [episode, ...]
   favEps:     "kzradio.favorites.v1",       // { [permalink]: { title, showName, mp3, image, ts } }
   favShows:   "kzradio.favShows.v1",        // { [slug]:  { name, ts } }
-  catalog:    "kzradio.catalog.v1",         // { fetchedAt, shows: [{ slug, name }] }
+  catalog:    "kzradio.catalog.v2",         // { fetchedAt, shows: [{ slug, name, image, description, resolved }] }
   bootstrap:  "kzradio.bootstrapDone.v1",
 };
 
@@ -983,20 +983,20 @@ function parseShowPage(html) {
   const doc = new DOMParser().parseFromString(html, "text/html");
   let image = null;
   let description = null;
+  let name = null;
 
-  // Show-specific image from JSON-LD thumbnailUrl
+  // Show-specific image + name from JSON-LD
   for (const script of doc.querySelectorAll('script[type="application/ld+json"]')) {
     try {
       const data = JSON.parse(script.textContent);
       const graph = data["@graph"] || (Array.isArray(data) ? data : [data]);
       for (const node of graph) {
-        if (node["@type"] === "CollectionPage" && node.thumbnailUrl) {
-          image = node.thumbnailUrl;
-          break;
+        if (node["@type"] === "CollectionPage") {
+          if (node.thumbnailUrl && !image) image = node.thumbnailUrl;
+          if (node.name && !name) name = node.name;
         }
       }
     } catch {}
-    if (image) break;
   }
 
   // Show description from <div class='show-desc'><p>
@@ -1005,33 +1005,36 @@ function parseShowPage(html) {
     description = descEl.textContent.replace(/\s+/g, " ").trim() || null;
   }
 
-  return { image, description };
-}
-
-function parseShowFilter(html) {
-  const doc = new DOMParser().parseFromString(html, "text/html");
-  const sel = doc.querySelector('select[name="showsfilter"]');
-  if (!sel) return [];
-  const out = [];
-  for (const opt of sel.querySelectorAll("option")) {
-    const v = (opt.getAttribute("value") || "").trim();
-    if (!/^\d+$/.test(v)) continue;
-    out.push({ id: parseInt(v, 10), name: opt.textContent.trim() });
+  // Display name: <h1> carries the clean show title; fall back to JSON-LD
+  // (handled above) then <title>/og:title, which append a " - KZradio ..." suffix.
+  const h1 = doc.querySelector("h1")?.textContent;
+  if (h1 && h1.trim()) name = h1;
+  if (!name) {
+    name = doc.querySelector('meta[property="og:title"]')?.getAttribute("content")
+        || doc.querySelector("title")?.textContent
+        || null;
   }
-  return out;
+  if (name) {
+    name = name.replace(/\s+/g, " ").trim().replace(/\s*[-–|]\s*KZ ?radio.*$/i, "").trim() || null;
+  }
+
+  return { name, image, description };
 }
 
-function harvestSlugMap(html) {
-  const doc = new DOMParser().parseFromString(html, "text/html");
-  const map = {};
-  for (const a of doc.querySelectorAll(".od-show-name a")) {
-    const m = (a.getAttribute("href") || "").match(/\/shows\/([^/?#]+)\/?$/);
+function parseShowsSitemap(xmlText) {
+  const doc = new DOMParser().parseFromString(xmlText, "application/xml");
+  if (doc.querySelector("parsererror")) throw new Error("sitemap parse error");
+  const slugs = [];
+  const seen = new Set();
+  for (const loc of doc.getElementsByTagName("loc")) {
+    const m = (loc.textContent || "").trim().match(/\/shows\/([^/?#]+)\/?$/);
     if (!m) continue;
     const slug = m[1];
-    const name = a.textContent.trim();
-    if (name && !map[name]) map[name] = slug;
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    slugs.push(slug);
   }
-  return map;
+  return slugs;
 }
 
 function extractSlug(input) {
@@ -1051,38 +1054,56 @@ async function loadCatalog() {
   if (state.catalogLoading) return;
   update({ catalogLoading: true, catalogError: null });
   try {
-    const r = await fetchViaProxy(`${BASE}/last-shows`);
-    const html = await r.text();
-    const terms = parseShowFilter(html);
-    if (!terms.length) throw new Error("no showsfilter <select> on /last-shows");
+    // 1. Complete slug list straight from the Yoast taxonomy sitemap -- one
+    //    small fetch covering every show page, no episode-archive crawling.
+    const r = await fetchViaProxy(`${BASE}/shows-sitemap.xml`);
+    const slugs = parseShowsSitemap(await r.text());
+    if (!slugs.length) throw new Error("no show URLs in shows-sitemap.xml");
 
-    const slugMap = { ...harvestSlugMap(html) };
-    let lastAdd = 1;
-    for (let page = 2; page <= 60; page++) {
-      let pageHtml;
-      try {
-        const rp = await fetchViaProxy(`${BASE}/last-shows/page/${page}/`);
-        pageHtml = await rp.text();
-      } catch {
+    // 2. Seed from any prior cache so a partial run resumes rather than
+    //    restarting; slugs not yet resolved get the slug as a placeholder name.
+    const cached = ls.get(STORE.catalog, null);
+    const slugSet = new Set(slugs);
+    const bySlug = new Map();
+    for (const s of (cached?.shows || [])) {
+      if (slugSet.has(s.slug)) bySlug.set(s.slug, s);
+    }
+    for (const slug of slugs) {
+      if (!bySlug.has(slug)) {
+        bySlug.set(slug, { slug, name: slug, image: null, description: null, resolved: false });
+      }
+    }
+    const persist = () => {
+      const shows = Array.from(bySlug.values());
+      ls.set(STORE.catalog, { fetchedAt: Date.now(), shows });
+      update({ catalog: shows });
+    };
+    persist();
+
+    // 3. Resolve display name + image + description from each show page,
+    //    in small concurrent batches to respect the public CORS proxies.
+    const pending = slugs.filter(s => !bySlug.get(s).resolved);
+    const BATCH = 5;
+    for (let i = 0; i < pending.length; i += BATCH) {
+      await Promise.all(pending.slice(i, i + BATCH).map(async slug => {
         try {
-          const rp = await fetchViaProxy(`${BASE}/last-shows/?paged=${page}`);
-          pageHtml = await rp.text();
-        } catch { break; }
-      }
-      const before = Object.keys(slugMap).length;
-      for (const [n, s] of Object.entries(harvestSlugMap(pageHtml))) {
-        if (!slugMap[n]) slugMap[n] = s;
-      }
-      if (Object.keys(slugMap).length > before) lastAdd = page;
-      const matched = terms.filter(t => slugMap[t.name]).length;
-      if (matched === terms.length) break;
-      if (page - lastAdd >= 3) break;
+          const html = await (await fetchViaProxy(`${BASE}/shows/${slug}/`)).text();
+          const { name, image, description } = parseShowPage(html);
+          bySlug.set(slug, {
+            slug,
+            name: name || slug,
+            image: image || null,
+            description: description || null,
+            resolved: !!name,
+          });
+        } catch {
+          // leave unresolved -> retried on the next load
+        }
+      }));
+      persist();
     }
 
-    const shows = terms.map(t => ({ id: t.id, name: t.name, slug: slugMap[t.name] || null }))
-                       .filter(s => s.slug);
-    ls.set(STORE.catalog, { fetchedAt: Date.now(), shows });
-    update({ catalog: shows, catalogLoading: false });
+    update({ catalogLoading: false });
   } catch (e) {
     update({ catalogLoading: false, catalogError: e.message });
   }
@@ -1346,30 +1367,35 @@ function stepEpisode(delta) {
 // =========================================================================
 
 function getCombinedShows() {
-  // Catalog ∪ My Shows. Catalog is the source of truth for names/slugs;
+  // Catalog ∪ My Shows, keyed by slug so near-duplicate shows that share a
+  // display name stay distinct. Catalog is the source of truth for names;
   // myShows adds episodeCount, image, description and ensures shows the user
   // has added are visible even if catalog isn't loaded yet.
-  const byName = new Map();    // name -> { slug, name, image, description }
+  const bySlug = new Map();    // slug -> { slug, name, image, description }
   if (Array.isArray(state.catalog)) {
     for (const s of state.catalog) {
-      byName.set(s.name, { slug: s.slug, name: s.name, image: null, description: null });
+      bySlug.set(s.slug, {
+        slug: s.slug, name: s.name,
+        image: s.image || null,
+        description: s.description || null,
+      });
     }
   }
   for (const [slug, meta] of Object.entries(state.myShows)) {
-    const existing = byName.get(meta.name);
+    const existing = bySlug.get(slug);
     if (existing) {
-      existing.slug = slug;
+      existing.name = existing.name || meta.name;
       existing.image = meta.image || existing.image;
       existing.description = meta.description || existing.description;
     } else {
-      byName.set(meta.name, {
+      bySlug.set(slug, {
         slug, name: meta.name,
         image: meta.image || null,
         description: meta.description || null,
       });
     }
   }
-  return Array.from(byName.values());
+  return Array.from(bySlug.values());
 }
 
 function filteredShows() {
@@ -2157,8 +2183,9 @@ if ("serviceWorker" in navigator) {
     ls.set(STORE.bootstrap, true);
   }
 
-  // load catalog if we don't have one yet
-  if (!state.catalog) {
+  // load the catalog if we have none, or resume if a prior run left
+  // some shows unresolved (e.g. proxy rate-limited mid-load)
+  if (!state.catalog || state.catalog.some(s => !s.resolved)) {
     loadCatalog();
   }
 })();
