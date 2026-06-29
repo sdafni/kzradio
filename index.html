@@ -268,6 +268,28 @@
   .selected .err { color: var(--danger); }
   .selected .ok { color: var(--ok); }
 
+  .tracks {
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+  }
+  .tracks summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 13px;
+    user-select: none;
+    padding: 4px 0;
+  }
+  .tracks summary:hover { color: var(--accent); }
+  .tracks ol {
+    margin: 8px 0 0;
+    padding-inline-start: 24px;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .tracks li { padding: 2px 0; }
+  .tracks li::marker { color: var(--muted); }
+
   .spinner {
     display: inline-block; width: 14px; height: 14px;
     border: 2px solid var(--border); border-top-color: var(--accent);
@@ -443,9 +465,25 @@ function parseRss(xmlText) {
     let id = null;
     const m = (link || guid).match(/\/shows\/[^/]+\/(\d+)/);
     if (m) id = parseInt(m[1], 10);
-    items.push({ id, title, date, permalink: link || guid, mp3, image });
+    const descHtml = it.querySelector(":scope > description")?.textContent || "";
+    const tracks = parseTracks(descHtml);
+    items.push({ id, title, date, permalink: link || guid, mp3, image, tracks });
   }
   return { channelTitle, channelImage, channelDescription, items };
+}
+
+// Episode <description> is the track listing -- usually "Artist - Title"
+// lines separated either by <br/> tags or by raw newlines, sometimes both.
+// Normalize: convert breaks to \n, strip remaining tags, split on \n.
+function parseTracks(html) {
+  if (!html) return [];
+  const withBreaks = html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|li|div)>/gi, "\n");
+  const tmp = document.createElement("div");
+  tmp.innerHTML = withBreaks;
+  const text = tmp.textContent || "";
+  return text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 }
 
 function stripHtml(s) {
@@ -1267,6 +1305,11 @@ function renderEpSelected() {
       <button id="nextBtn">Next ›</button>
     </div>
     <div id="audioMount"></div>
+    ${ep.tracks?.length ? `
+      <details class="tracks" ${ep.tracks.length <= 30 ? "open" : ""}>
+        <summary>Track listing (${ep.tracks.length})</summary>
+        <ol>${ep.tracks.map(t => `<li>${escapeHtml(t)}</li>`).join("")}</ol>
+      </details>` : ""}
   `;
   div.querySelector("#playBtn").addEventListener("click", () => playEpisode(ep, showMeta));
   div.querySelector("#epStarBtn").addEventListener("click", () => toggleFavEpisode(ep));
