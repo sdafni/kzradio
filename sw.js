@@ -9,7 +9,7 @@
  *     network; we don't want to fill phone storage with cached audio.
  */
 
-const VERSION = "kzradio-v2";
+const VERSION = "kzradio-v3";
 const SHELL = [
   "./",
   "./index.html",
