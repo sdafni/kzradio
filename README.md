@@ -19,14 +19,14 @@ The install page also has a **Latest episodes** view that needs no setup: the la
 
 | What | Where |
 |---|---|
-| List of shows | `/shows-sitemap.xml` |
-| Show name and image | `<head>` of `/shows/{slug}/` (the rest of the page is not downloaded) |
+| List of shows (names as the site shows them) | `<select name="showsfilter">` on `/last-shows`; reading stops after it (~50 KB) |
+| Show slug, looked up when you pick a show | `POST /last-shows` with `free_search=&showsfilter={id}`; the first episode card links to `/shows/{slug}` |
 | Episodes and track listings | `/shows/{slug}/feed?paged=N` (404 after the last page) |
-| Show description | `/shows/{slug}/` |
+| Show image and description | `/shows/{slug}/` |
 
-kzradio.net rate-limits bursts (HTTP 429 after about 50 fast requests). The first catalog load resolves show names one per second in the background (about 4 minutes, then cached). Episodes for a show load right away.
+kzradio.net rate-limits bursts (HTTP 429 after about 50 fast requests), so the picker only requests what you open: one request for the show list, then a few per show you pick.
 
-Data is kept in kzradio.net's `localStorage` under `kzw.*` keys. Show names refresh against the sitemap daily; a show's episodes refresh when you open it after 12 hours.
+Data is kept in kzradio.net's `localStorage` under `kzw.*` keys. The show list refreshes daily; a show's episodes refresh when you open it after 12 hours.
 
 ## Files
 

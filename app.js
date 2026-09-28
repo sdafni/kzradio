@@ -389,13 +389,10 @@ const STORE = {
   epPrefix:   "kzw.episodes.v1.",      // + slug -> [episode, ...]
   favEps:     "kzw.favorites.v1",      // { [permalink]: { title, showName, mp3, image, ts } }
   favShows:   "kzw.favShows.v1",       // { [slug]:  { name, ts } }
-  catalog:    "kzw.catalog.v1",        // { fetchedAt, shows: [{ slug, name, image, resolved }] }
+  catalog:    "kzw.catalog.v2",        // { fetchedAt, shows: [{ id, name, slug?, empty? }] }
 };
 const CATALOG_MAX_AGE_MS = 24 * 3600 * 1000;
 const EPISODES_MAX_AGE_MS = 12 * 3600 * 1000;
-const CATALOG_REQUEST_GAP_MS = 1000;
-const RATE_LIMIT_PAUSE_MS = 60 * 1000;
-const CATALOG_MAX_PAUSES = 3;
 
 const ls = {
   get(k, fb) { try { const v = localStorage.getItem(k); return v == null ? fb : JSON.parse(v); } catch { return fb; } },
@@ -417,6 +414,7 @@ const state = {
   catalogError: null,
   storageFull: false,
   notice: null,
+  lookingUp: null,       // name of the show whose slug is being looked up
 
   myShows: ls.get(STORE.myShows, {}),
   // episodes are lazy: state.episodes[slug] is the array; absence ≠ empty
@@ -470,11 +468,10 @@ async function fetchText(url) {
   return r.text();
 }
 
-// A show page is ~75 KB, but its name and image are in <head> (~30 KB).
-// Read only until </head> and cancel the rest; this keeps the catalog
-// (one request per show) small on mobile.
-async function fetchHead(url) {
-  const r = await fetch(url);
+// Read a response only until isDone(text) is true, then cancel the rest.
+// kzradio.net pages are ~300 KB, but what we need is in the first ~60 KB.
+async function fetchPrefix(url, isDone, init) {
+  const r = await fetch(url, init);
   if (!r.ok) throw httpError(r, url);
   if (!r.body?.getReader) return r.text();
   const reader = r.body.getReader();
@@ -484,10 +481,9 @@ async function fetchHead(url) {
     const { done, value } = await reader.read();
     if (done) return text;
     text += decoder.decode(value, { stream: true });
-    const end = text.indexOf("</head>");
-    if (end >= 0) {
+    if (isDone(text)) {
       reader.cancel().catch(() => {});
-      return text.slice(0, end);
+      return text;
     }
   }
 }
@@ -604,20 +600,17 @@ function cleanShowName(name) {
   return name.replace(/\s+/g, " ").trim().replace(/\s*[-–|]\s*KZ ?radio.*$/i, "").trim() || null;
 }
 
-function parseShowsSitemap(xmlText) {
-  const doc = new DOMParser().parseFromString(xmlText, "application/xml");
-  if (doc.querySelector("parsererror")) throw new Error("sitemap parse error");
-  const slugs = [];
-  const seen = new Set();
-  for (const loc of doc.getElementsByTagName("loc")) {
-    const m = (loc.textContent || "").trim().match(/\/shows\/([^/?#]+)\/?$/);
-    if (!m) continue;
-    const slug = m[1];
-    if (seen.has(slug)) continue;
-    seen.add(slug);
-    slugs.push(slug);
+// kzradio.net's On Demand filter: <select name="showsfilter"> with one
+// <option value="{term id}">{show name}</option> per show.
+function parseShowFilter(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const shows = [];
+  for (const opt of doc.querySelectorAll('select[name="showsfilter"] option')) {
+    const id = (opt.getAttribute("value") || "").trim();
+    const name = opt.textContent.replace(/\s+/g, " ").trim();
+    if (/^\d+$/.test(id) && name) shows.push({ id, name });
   }
-  return slugs;
+  return shows;
 }
 
 function extractSlug(input) {
@@ -633,64 +626,56 @@ function extractSlug(input) {
 // data ops: catalog, show RSS
 // =========================================================================
 
+// Show list with names as kzradio.net shows them, from one request.
+// Slugs are looked up later, one show at a time, when the user picks it.
 async function loadCatalog() {
   if (state.catalogLoading) return;
   update({ catalogLoading: true, catalogError: null });
   try {
-    // 1. Complete slug list straight from the Yoast taxonomy sitemap -- one
-    //    small fetch covering every show page, no episode-archive crawling.
-    const slugs = parseShowsSitemap(await fetchText(`${BASE}/shows-sitemap.xml`));
-    if (!slugs.length) throw new Error("no show URLs in shows-sitemap.xml");
-
-    // 2. Seed from any prior cache so a partial run resumes rather than
-    //    restarting; slugs not yet resolved get the slug as a placeholder name.
-    const cached = ls.get(STORE.catalog, null);
-    const slugSet = new Set(slugs);
-    const bySlug = new Map();
-    for (const s of (cached?.shows || [])) {
-      if (slugSet.has(s.slug)) bySlug.set(s.slug, s);
-    }
-    for (const slug of slugs) {
-      if (!bySlug.has(slug)) {
-        bySlug.set(slug, { slug, name: slug, image: null, resolved: false });
-      }
-    }
-    const persist = () => {
-      const shows = Array.from(bySlug.values());
-      const fetchedAt = Date.now();
-      ls.set(STORE.catalog, { fetchedAt, shows });
-      update({ catalog: shows, catalogFetchedAt: fetchedAt });
-    };
-    persist();
-
-    // 3. Resolve display name + image from the <head> of each show page.
-    //    kzradio.net answers 429 to bursts (about 50 requests in a few
-    //    seconds), so go one at a time and pause when it pushes back.
-    const pending = slugs.filter(s => !bySlug.get(s).resolved);
-    let pauses = 0;
-    for (let i = 0; i < pending.length; i++) {
-      const slug = pending[i];
-      try {
-        const { name, image } = parseShowPage(await fetchHead(`${BASE}/shows/${slug}/`));
-        bySlug.set(slug, { slug, name: name || slug, image: image || null, resolved: !!name });
-      } catch (e) {
-        if (e.status === 429) {
-          if (++pauses > CATALOG_MAX_PAUSES) break;  // rest waits for the next open
-          await sleep(RATE_LIMIT_PAUSE_MS);
-          i--;
-          continue;
-        }
-        // other errors: leave unresolved, retried on the next open
-      }
-      if (i % 10 === 9) persist();
-      await sleep(CATALOG_REQUEST_GAP_MS);
-    }
-    persist();
-
-    update({ catalogLoading: false });
+    const html = await fetchPrefix(`${BASE}/last-shows`, t => {
+      const i = t.indexOf('name="showsfilter"');
+      return i >= 0 && t.indexOf("</select>", i) >= 0;
+    });
+    const found = parseShowFilter(html);
+    if (!found.length) throw new Error("show list not found on /last-shows");
+    const known = new Map((state.catalog || []).map(s => [s.id, s]));
+    const shows = found.map(f => ({ ...known.get(f.id), id: f.id, name: f.name }));
+    const fetchedAt = Date.now();
+    ls.set(STORE.catalog, { fetchedAt, shows });
+    update({ catalog: shows, catalogFetchedAt: fetchedAt, catalogLoading: false });
   } catch (e) {
     update({ catalogLoading: false, catalogError: e.message });
   }
+}
+
+// Term id -> slug. Post the On Demand filter the way kzradio.net's own form
+// does (only these two fields: adding the other empty filters returns no
+// results), then read the show link in the first episode card.
+async function lookupSlug(id) {
+  const card = /od-show-name">\s*<a href="[^"]*\/shows\/([^/"?#]+)/;
+  const html = await fetchPrefix(`${BASE}/last-shows`,
+    t => card.test(t) || t.includes("results no-results"),
+    { method: "POST", body: new URLSearchParams({ free_search: "", showsfilter: id }) });
+  return html.match(card)?.[1] || null;
+}
+
+async function pickShow(show) {
+  if (show.slug) { selectShow(show.slug); return; }
+  update({ showOpen: false, showQuery: "", lookingUp: show.name });
+  let slug = null, notice = null;
+  try {
+    slug = await lookupSlug(show.id);
+    if (!slug) notice = `No episodes found for "${show.name}"`;
+  } catch (e) {
+    notice = e.message;
+  }
+  // Old, empty entries in kzradio.net's list get hidden after the first try.
+  const shows = state.catalog.map(s => s.id !== show.id ? s
+    : slug ? { ...s, slug } : notice.startsWith("No episodes") ? { ...s, empty: true } : s);
+  ls.set(STORE.catalog, { fetchedAt: state.catalogFetchedAt, shows });
+  update({ catalog: shows, lookingUp: null, notice });
+  if (notice) setTimeout(() => update({ notice: null }), 6000);
+  if (slug) selectShow(slug);
 }
 
 async function fetchShow(slug) {
@@ -732,7 +717,7 @@ async function fetchShow(slug) {
 
     ls.set(STORE.epPrefix + slug, all);
     const prev = state.myShows[slug];
-    const catalogName = state.catalog?.find(s => s.slug === slug && s.resolved)?.name;
+    const catalogName = state.catalog?.find(s => s.slug === slug)?.name;
     const myShows = {
       ...state.myShows,
       [slug]: {
@@ -877,35 +862,26 @@ function stepEpisode(delta) {
 // =========================================================================
 
 function getCombinedShows() {
-  // Catalog ∪ My Shows, keyed by slug so near-duplicate shows that share a
-  // display name stay distinct. Catalog is the source of truth for names;
-  // myShows adds episodeCount, image, description and ensures shows the user
-  // has added are visible even if catalog isn't loaded yet.
-  const bySlug = new Map();    // slug -> { slug, name, image, description }
-  if (Array.isArray(state.catalog)) {
-    for (const s of state.catalog) {
-      bySlug.set(s.slug, {
-        slug: s.slug, name: s.name,
-        image: s.image || null,
-        description: s.description || null,
-      });
-    }
+  // Catalog (kzradio.net's show list) plus shows the user opened by URL.
+  // Keyed by slug when known, else by term id, so same-named shows stay distinct.
+  const byKey = new Map();
+  const bySlug = new Map();
+  for (const s of state.catalog || []) {
+    if (s.empty) continue;
+    const entry = { id: s.id, slug: s.slug || null, name: s.name, image: null, description: null };
+    byKey.set(s.slug || `id:${s.id}`, entry);
+    if (s.slug) bySlug.set(s.slug, entry);
   }
   for (const [slug, meta] of Object.entries(state.myShows)) {
-    const existing = bySlug.get(slug);
-    if (existing) {
-      existing.name = existing.name || meta.name;
-      existing.image = meta.image || existing.image;
-      existing.description = meta.description || existing.description;
+    const entry = bySlug.get(slug);
+    if (entry) {
+      entry.image = meta.image || null;
+      entry.description = meta.description || null;
     } else {
-      bySlug.set(slug, {
-        slug, name: meta.name,
-        image: meta.image || null,
-        description: meta.description || null,
-      });
+      byKey.set(slug, { slug, name: meta.name, image: meta.image || null, description: meta.description || null });
     }
   }
-  return Array.from(bySlug.values());
+  return Array.from(byKey.values());
 }
 
 function filteredShows() {
@@ -1037,11 +1013,6 @@ function renderStatus() {
     return;
   }
   if (state.notice) { el.textContent = state.notice; return; }
-  const unresolved = state.catalog?.filter(s => !s.resolved).length || 0;
-  if (state.catalogLoading && unresolved) {
-    el.textContent = `Loading show names ${state.catalog.length - unresolved}/${state.catalog.length}…`;
-    return;
-  }
   const myCount = Object.keys(state.myShows).length;
   const epTotal = Object.values(state.myShows).reduce((s, m) => s + (m.episodeCount || 0), 0);
   if (myCount === 0 && !state.catalog) el.textContent = "starting up…";
@@ -1118,7 +1089,7 @@ function renderShowDropdown() {
     // clicking the info icon should NOT select the show
     li.querySelector(".info-icon")?.addEventListener("click", e => e.stopPropagation());
     li.querySelector(".info-icon")?.addEventListener("mousedown", e => e.stopPropagation());
-    li.addEventListener("click", () => selectShow(s.slug));
+    li.addEventListener("click", () => pickShow(s));
     ul.appendChild(li);
   }
   if (items.length > max) {
@@ -1135,9 +1106,14 @@ function renderShowSelected() {
   const div = $("showSelected");
   const slug = state.selectedShowSlug;
 
+  if (!slug && state.lookingUp) {
+    div.classList.add("placeholder");
+    div.innerHTML = `<span class="spinner"></span> Finding ${escapeHtml(state.lookingUp)}…`;
+    return;
+  }
   if (!slug) {
     div.classList.add("placeholder");
-    const cnt = state.catalog?.length || 0;
+    const cnt = getCombinedShows().length;
     div.innerHTML = cnt
       ? `Pick a show above (or paste a kzradio URL) — ${cnt} known.
          <div class="actions" style="justify-content:center; margin-top:10px;">
@@ -1148,7 +1124,7 @@ function renderShowSelected() {
       const all = getCombinedShows();
       if (!all.length) return;
       const pick = all[Math.floor(Math.random() * all.length)];
-      selectShow(pick.slug);
+      pickShow(pick);
     });
     return;
   }
@@ -1481,7 +1457,7 @@ function wireCombobox(which) {
           const slug = extractSlug(input.value);
           if (slug) selectShow(slug);
         } else if (list[idx]) {
-          selectShow(list[idx].slug);
+          pickShow(list[idx]);
         }
       } else {
         if (idx >= 0 && list[idx]) selectEpisode(list[idx].permalink);
@@ -1519,6 +1495,7 @@ function importFavoritesFromHash() {
 
 function start() {
   started = true;
+  ls.remove("kzw.catalog.v1");
   $("showFavBtn").addEventListener("click", () => update({ showFavOnly: !state.showFavOnly }));
   $("epFavBtn").addEventListener("click",   () => update({ epFavOnly:   !state.epFavOnly }));
   wireCombobox("show");
@@ -1536,10 +1513,8 @@ function open() {
   $("overlay").hidden = false;
   $("launcher").hidden = true;
   document.documentElement.style.overflow = "hidden";
-  // Missing, partly resolved, or a day old: sync with the sitemap. Shows
-  // already resolved are kept, so a re-run only fetches new shows.
-  const catalogStale = Date.now() - state.catalogFetchedAt > CATALOG_MAX_AGE_MS;
-  if (!state.catalog || catalogStale || state.catalog.some(s => !s.resolved)) {
+  // Refresh the show list daily; slugs already found are kept by term id.
+  if (!state.catalog || Date.now() - state.catalogFetchedAt > CATALOG_MAX_AGE_MS) {
     loadCatalog();
   }
 }
