@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "kzradio-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-28",
+  "workers_dev": true,
+  "kv_namespaces": [
+    // Cache for replies. The Cache API does nothing on *.workers.dev, so KV it is.
+    { "binding": "CACHE", "id": "505f06ddffde4dea883e3e5fb901c5e8" }
+  ],
+  "observability": { "enabled": true }
+}

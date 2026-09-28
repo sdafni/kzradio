@@ -1,280 +1,111 @@
 <!doctype html>
-<html lang="en">
+<html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#0e0f12" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="KZRadio" />
+<meta name="description" content="Every KZradio show and episode: search, star, random pick, track listings." />
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="icon" href="icon.svg" type="image/svg+xml" />
-<link rel="apple-touch-icon" href="icon.svg" />
+<link rel="apple-touch-icon" href="icon-192.png" />
 <title>KZRadio Picker</title>
 <style>
-  :root {
-    --bg: #0e0f12; --panel: #16181d; --panel-2: #1e2229; --panel-3: #262b34;
-    --text: #f1f1f1; --muted: #9aa0a6; --accent: #ffcc33; --accent-2: #ff8855;
-    --border: #2a2f38; --danger: #ff7b7b;
+  html, body { margin: 0; background: #0e0f12; color: #f1f1f1; }
+  .install {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    margin: 0 auto; max-width: 760px; box-sizing: border-box;
+    padding: 12px 16px; padding-top: max(12px, env(safe-area-inset-top));
+    font: 14px/1.4 -apple-system, "Segoe UI", "Heebo", "Arial Hebrew", Arial, sans-serif;
+    color: #9aa0a6; border-bottom: 1px solid #2a2f38;
   }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; background: var(--bg); color: var(--text); }
-  body {
-    font: 16px/1.5 -apple-system, "Segoe UI", "Heebo", "Arial Hebrew", Arial, sans-serif;
-    padding: 16px;
-    padding-top: max(16px, env(safe-area-inset-top));
-    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  .install[hidden] { display: none; }
+  .install .text { flex: 1; min-width: 200px; }
+  .install b { color: #f1f1f1; }
+  .install button {
+    font: inherit; font-weight: 600; min-height: 38px; padding: 8px 14px; border-radius: 8px;
+    border: 1px solid #ffcc33; background: #ffcc33; color: #1a1a1a; cursor: pointer;
   }
-  main { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
-  h1 { font-size: 20px; margin: 0; }
-  h2 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: 0 0 8px; }
-  h3 { font-size: 15px; margin: 14px 0 4px; }
-  p { margin: 4px 0; }
-  a { color: var(--accent); }
-  .muted { color: var(--muted); font-size: 14px; }
-  section { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
-  section[hidden] { display: none; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
-  .btn {
-    display: inline-flex; align-items: center; min-height: 40px; padding: 8px 14px;
-    border-radius: 8px; border: 1px solid var(--border); background: var(--panel-3);
-    color: var(--text); font: inherit; text-decoration: none; cursor: pointer;
-  }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #1a1a1a; font-weight: 600; }
-  .btn.bookmarklet { border-style: dashed; border-color: var(--accent); color: var(--accent); cursor: grab; }
-  ol.steps { margin: 4px 0; padding-inline-start: 22px; }
-  ol.steps li { margin: 2px 0; }
-  input[type=search] {
-    width: 100%; min-height: 44px; padding: 10px 12px; font: inherit;
-    background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
-  }
-  ul.eps { list-style: none; margin: 10px 0 0; padding: 0; }
-  ul.eps li {
-    display: flex; gap: 10px; align-items: center; padding: 8px 4px;
-    border-bottom: 1px solid var(--border); cursor: pointer;
-  }
-  ul.eps li:hover, ul.eps li.playing { background: var(--panel-3); }
-  ul.eps li img { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; flex-shrink: 0; background: #000; }
-  ul.eps .t { flex: 1; min-width: 0; }
-  ul.eps .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  ul.eps .meta { color: var(--muted); font-size: 12px; }
-  .player {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
-    background: var(--panel-2); border-top: 1px solid var(--border);
-    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
-  }
-  .player[hidden] { display: none; }
-  .player .inner { max-width: 760px; margin: 0 auto; }
-  .player .title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .player audio { width: 100%; margin-top: 6px; }
-  .player details { font-size: 13px; color: var(--muted); max-height: 30vh; overflow-y: auto; }
-  .err { color: var(--danger); }
+  .install button.ghost { background: transparent; color: #9aa0a6; border-color: #2a2f38; font-weight: 400; }
+  .install a { color: #ffcc33; }
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <h1>KZRadio Picker</h1>
-    <p class="muted">Browse every show and episode of <a href="https://www.kzradio.net/">kzradio.net</a>, with search, stars, random pick and track listings. The picker runs on top of kzradio.net itself, so it reads the site directly. Nothing is stored on any server.</p>
-  </header>
-
-  <section>
-    <h2>Open the picker</h2>
-    <p>Add it once per browser, in one of two ways:</p>
-
-    <h3>1. Userscript (opens with one tap, recommended)</h3>
-    <p class="muted">A userscript manager adds a <b>&#9835;</b> button to every kzradio.net page.</p>
-    <ol class="steps">
-      <li><b>Computer:</b> install <a href="https://violentmonkey.github.io/" target="_blank" rel="noopener">Violentmonkey</a> or <a href="https://www.tampermonkey.net/" target="_blank" rel="noopener">Tampermonkey</a>. In Chrome or Edge, also turn on <i>Allow user scripts</i> in the extension's Details page.</li>
-      <li><b>iPhone / iPad:</b> install the free <a href="https://apps.apple.com/app/userscripts/id1463298887" target="_blank" rel="noopener">Userscripts</a> app, then turn it on in Settings &rarr; Apps &rarr; Safari &rarr; Extensions. Use it in Safari; Home Screen web apps do not run extensions.</li>
-      <li><b>Android:</b> use Firefox and add the Violentmonkey add-on.</li>
-    </ol>
-    <div class="row">
-      <a class="btn primary" href="kzradio.user.js">Install userscript</a>
-      <a class="btn" href="https://www.kzradio.net/">Open kzradio.net</a>
-    </div>
-
-    <h3>2. Bookmarklet (no extension)</h3>
-    <p class="muted">A bookmark that opens the picker when you tap it on kzradio.net.</p>
-    <ol class="steps">
-      <li><b>Computer:</b> drag this button to your bookmarks bar: <a class="btn bookmarklet" id="bookmarklet" href="#" onclick="return false">KZ Picker</a></li>
-      <li><b>Phone:</b> copy the code, bookmark any page, edit the bookmark, and paste the code as its address. On kzradio.net, open your bookmarks and tap it. In Chrome for Android, type the bookmark's name in the address bar and pick it.</li>
-    </ol>
-    <div class="row">
-      <button class="btn" id="copyBookmarklet" type="button">Copy bookmarklet code</button>
-      <span class="muted" id="copyStatus"></span>
-    </div>
-  </section>
-
-  <section id="migrate" hidden>
-    <h2>Your saved stars</h2>
-    <p id="migrateText"></p>
-    <p class="muted">The picker now keeps its data on kzradio.net, so move them there once. Open the link, then open the picker. The userscript opens it by itself.</p>
-    <div class="row"><a class="btn primary" id="migrateLink" href="#">Move stars to kzradio.net</a></div>
-  </section>
-
-  <section>
-    <h2>Latest episodes (no setup)</h2>
-    <p class="muted">The last ~600 episodes across all shows, from KZradio's Podbean feed. For the full archive per show, use the picker above.</p>
-    <div class="row"><input type="search" id="latestQuery" placeholder="Search latest episodes…" autocomplete="off" /></div>
-    <p class="muted" id="latestStatus">Loading…</p>
-    <ul class="eps" id="latestList"></ul>
-  </section>
-</main>
-
-<div class="player" id="player" hidden>
-  <div class="inner">
-    <div class="title" id="playerTitle" dir="auto"></div>
-    <audio id="audio" controls preload="none"></audio>
-    <details id="playerTracks" hidden><summary>Track listing</summary><ol id="playerTrackList"></ol></details>
-  </div>
+<div class="install" id="installBar" dir="ltr" hidden>
+  <span class="text" id="installText"></span>
+  <button type="button" id="installBtn" hidden>Install app</button>
+  <button type="button" class="ghost" id="installDismiss">Not now</button>
 </div>
 
+<script src="app.js"></script>
 <script>
 "use strict";
 
-const $ = id => document.getElementById(id);
-const APP_URL = new URL("app.js", location.href).href;
-const PODBEAN_FEED = "https://feed.podbean.com/kzradio/feed.xml";
-const ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd";
+// ---- install as an app ----------------------------------------------------
+// Chrome (Android and desktop) hands the page an install prompt it can show
+// on a button tap. iPhone Safari has no such API: the page can only explain
+// the two taps in Safari's own menu.
 
-// ---- bookmarklet ----------------------------------------------------------
+const bar = document.getElementById("installBar");
+const text = document.getElementById("installText");
+const btn = document.getElementById("installBtn");
+const DISMISS_KEY = "kzw.installDismissed";
 
-const BOOKMARKLET = "javascript:(()=>{"
-  + "if(location.hostname!=='www.kzradio.net'){location.href='https://www.kzradio.net/';return}"
-  + "if(window.kzw){kzw.open();return}"
-  + "window.kzwOpenOnLoad=1;"
-  + "var s=document.createElement('script');"
-  + `s.src='${APP_URL}';`
-  + "document.body.appendChild(s)})()";
+const installed = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const isAndroid = /Android/i.test(navigator.userAgent);
+// iPads report a Mac platform; the touch check tells them apart.
+const isIos = !isAndroid && (/iPhone|iPad|iPod/.test(navigator.userAgent)
+  || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+let dismissed = false;
+try { dismissed = localStorage.getItem(DISMISS_KEY) === "1"; } catch {}
 
-$("bookmarklet").href = BOOKMARKLET;
-$("copyBookmarklet").addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(BOOKMARKLET);
-    $("copyStatus").textContent = "Copied.";
-  } catch {
-    prompt("Copy this code:", BOOKMARKLET);
-  }
+function showBar(html, withButton) {
+  if (installed || dismissed) return;
+  text.innerHTML = html;
+  btn.hidden = !withButton;
+  bar.hidden = false;
+}
+
+let installPrompt = null;
+addEventListener("beforeinstallprompt", e => {
+  e.preventDefault();
+  installPrompt = e;
+  showBar("<b>Install KZRadio</b> as an app on this device.", true);
 });
 
-// ---- move stars saved by the old version of this site ---------------------
+btn.addEventListener("click", async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  const { outcome } = await installPrompt.userChoice;
+  installPrompt = null;
+  if (outcome === "accepted") bar.hidden = true;
+});
 
-function readJson(key) {
-  try { return JSON.parse(localStorage.getItem(key) || "{}") || {}; } catch { return {}; }
+addEventListener("appinstalled", () => { bar.hidden = true; });
+
+document.getElementById("installDismiss").addEventListener("click", () => {
+  bar.hidden = true;
+  try { localStorage.setItem(DISMISS_KEY, "1"); } catch {}
+});
+
+// Chrome skips its prompt in some cases (for example after an earlier
+// "not now"); then point to the menu entry instead.
+if (isAndroid) {
+  setTimeout(() => {
+    if (!installPrompt) showBar("<b>Install:</b> open the browser menu <b>&#8942;</b> and tap <b>Install app</b> or <b>Add to Home screen</b>.", false);
+  }, 3000);
 }
 
-function toBase64Url(text) {
-  let binary = "";
-  for (const b of new TextEncoder().encode(text)) binary += String.fromCharCode(b);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+if (isIos) {
+  showBar("<b>Add to your Home Screen:</b> tap Share <span aria-hidden=\"true\">&#x2B06;&#xFE0E;</span>, then <b>Add to Home Screen</b>.", false);
 }
 
-(function offerMigration() {
-  const favEps = readJson("kzradio.favorites.v1");
-  const favShows = readJson("kzradio.favShows.v1");
-  const nEps = Object.keys(favEps).length, nShows = Object.keys(favShows).length;
-  if (!nEps && !nShows) return;
-  $("migrateText").textContent =
-    `This browser has ${nEps} starred episodes and ${nShows} starred shows from the old version.`;
-  $("migrateLink").href = "https://www.kzradio.net/#kzw-import=" + toBase64Url(JSON.stringify({ favEps, favShows }));
-  $("migrate").hidden = false;
-})();
-
-// ---- latest episodes from Podbean (it allows cross-origin reads) ----------
-
-let latest = [];
-
-function childText(item, tag) {
-  return item.getElementsByTagName(tag)[0]?.textContent?.trim() || "";
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(err => console.warn("service worker:", err));
 }
-
-function trackLines(html) {
-  if (!html) return [];
-  const text = new DOMParser()
-    .parseFromString(html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(?:p|li|div)>/gi, "\n"), "text/html")
-    .body.textContent || "";
-  return text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-}
-
-function parsePodbean(xml) {
-  const doc = new DOMParser().parseFromString(xml, "application/xml");
-  if (doc.querySelector("parsererror")) throw new Error("feed parse error");
-  const channelImage = doc.querySelector("channel > image > url")?.textContent || "";
-  return [...doc.querySelectorAll("channel > item")].map(item => {
-    const pub = new Date(childText(item, "pubDate"));
-    return {
-      title: childText(item, "title"),
-      date: isNaN(pub) ? "" : pub.toISOString().slice(0, 10),
-      mp3: item.querySelector("enclosure")?.getAttribute("url") || "",
-      duration: item.getElementsByTagNameNS(ITUNES_NS, "duration")[0]?.textContent || "",
-      image: item.getElementsByTagNameNS(ITUNES_NS, "image")[0]?.getAttribute("href") || channelImage,
-      tracks: trackLines(childText(item, "description")),
-    };
-  }).filter(ep => ep.mp3);
-}
-
-function formatDuration(d) {
-  if (!d) return "";
-  if (d.includes(":")) return d.replace(/^0(\d):/, "$1:");
-  const s = parseInt(d, 10);
-  return isNaN(s) ? "" : `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, "0")}`;
-}
-
-function renderLatest() {
-  const q = $("latestQuery").value.trim().toLowerCase();
-  const list = q ? latest.filter(ep => ep.title.toLowerCase().includes(q)) : latest;
-  const ul = $("latestList");
-  ul.replaceChildren();
-  for (const ep of list) {
-    const li = document.createElement("li");
-    if ($("audio").dataset.src === ep.mp3) li.classList.add("playing");
-    const img = document.createElement("img");
-    img.src = ep.image; img.alt = ""; img.loading = "lazy";
-    const t = document.createElement("div"); t.className = "t";
-    const title = document.createElement("div"); title.className = "title"; title.dir = "auto";
-    title.textContent = ep.title;
-    const meta = document.createElement("div"); meta.className = "meta";
-    meta.textContent = [ep.date, formatDuration(ep.duration)].filter(Boolean).join(" · ");
-    t.append(title, meta);
-    li.append(img, t);
-    li.addEventListener("click", () => play(ep));
-    ul.append(li);
-  }
-  $("latestStatus").textContent = q ? `${list.length} of ${latest.length} episodes` : `${latest.length} episodes`;
-}
-
-function play(ep) {
-  const audio = $("audio");
-  audio.src = ep.mp3;
-  audio.dataset.src = ep.mp3;
-  audio.play().catch(e => { $("latestStatus").textContent = `Playback error: ${e.message}`; });
-  $("playerTitle").textContent = ep.title;
-  const hasTracks = ep.tracks.length >= 2;
-  $("playerTracks").hidden = !hasTracks;
-  $("playerTrackList").replaceChildren(...(hasTracks ? ep.tracks : []).map(line => {
-    const li = document.createElement("li"); li.textContent = line; return li;
-  }));
-  $("player").hidden = false;
-  if ("mediaSession" in navigator) {
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: ep.title, artist: "KZradio",
-      artwork: ep.image ? [{ src: ep.image, sizes: "512x512" }] : [],
-    });
-  }
-  renderLatest();
-}
-
-$("latestQuery").addEventListener("input", renderLatest);
-
-(async function loadLatest() {
-  try {
-    const r = await fetch(PODBEAN_FEED);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    latest = parsePodbean(await r.text());
-    renderLatest();
-  } catch (e) {
-    $("latestStatus").textContent = `Could not load the Podbean feed: ${e.message}`;
-    $("latestStatus").classList.add("err");
-  }
-})();
 </script>
 </body>
 </html>

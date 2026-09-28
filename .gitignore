@@ -12,3 +12,7 @@ scrape.log
 
 # Stale orphans from the python-scraper era
 sample-data.json
+
+# Worker
+worker/node_modules/
+worker/.wrangler/

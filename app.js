@@ -8,10 +8,17 @@
 if (window.kzw) { window.kzw.open(); return; }
 
 const APP_BASE = new URL(".", document.currentScript?.src || location.href).href;
+const BASE = "https://www.kzradio.net";
+// On kzradio.net (userscript/bookmarklet) we read the site directly. Anywhere
+// else (the installable app on GitHub Pages) kzradio.net cannot be read from
+// the browser, so we go through our Worker, which reads it on the server.
+const ON_KZRADIO = location.origin === BASE;
+const API = "https://kzradio-api.sdafni.workers.dev";
 
 const CSS = `
   :host {
     all: initial;
+    display: block;
     --bg: #0e0f12;
     --panel: #16181d;
     --panel-2: #1e2229;
@@ -40,6 +47,9 @@ const CSS = `
     -webkit-tap-highlight-color: transparent;
   }
   .overlay[hidden] { display: none; }
+  /* The installable app: the picker is the page itself. */
+  .overlay.app { position: static; overflow: visible; min-height: 100vh; }
+  .overlay.app ~ .launcher, .overlay.app .close { display: none; }
   main { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
 
   .launcher {
@@ -373,6 +383,7 @@ root.innerHTML = `<style>${CSS}</style>
   <button type="button" class="launcher" id="launcher" title="KZRadio picker" aria-label="Open KZRadio picker">&#9835;</button>
   <div class="overlay" id="overlay" dir="rtl" hidden>${MARKUP}</div>`;
 const $ = id => root.getElementById(id);
+if (!ON_KZRADIO) $("overlay").classList.add("app");
 // Rendering waits for the first open: the userscript loads us on every
 // kzradio.net page, and most visits never open the picker.
 let started = false;
@@ -382,7 +393,6 @@ let started = false;
 // constants & storage
 // =========================================================================
 
-const BASE = location.origin;
 // This is kzradio.net's localStorage, so our keys get a prefix the site won't use.
 const STORE = {
   myShows:    "kzw.shows.v1",          // { [slug]: { name, image, description, episodeCount, lastFetched } }
@@ -453,7 +463,7 @@ function update(patch, persist = {}) {
 // =========================================================================
 
 function httpError(r, url) {
-  const e = new Error(r.status === 429
+  const e = new Error(r.status === 429 || r.status === 503
     ? "kzradio.net is limiting requests. Try again in a minute."
     : `HTTP ${r.status} for ${new URL(url).pathname}`);
   e.status = r.status;
@@ -626,18 +636,56 @@ function extractSlug(input) {
 // data ops: catalog, show RSS
 // =========================================================================
 
+// Same four reads, from kzradio.net itself or from the Worker.
+const direct = {
+  async listShows() {
+    const html = await fetchPrefix(`${BASE}/last-shows`, t => {
+      const i = t.indexOf('name="showsfilter"');
+      return i >= 0 && t.indexOf("</select>", i) >= 0;
+    });
+    return parseShowFilter(html);
+  },
+  // Post the On Demand filter the way kzradio.net's own form does (only these
+  // two fields: adding the other empty filters returns no results), then read
+  // the show link in the first episode card.
+  async lookupSlug(id) {
+    const card = /od-show-name">\s*<a href="[^"]*\/shows\/([^/"?#]+)/;
+    const html = await fetchPrefix(`${BASE}/last-shows`,
+      t => card.test(t) || t.includes("results no-results"),
+      { method: "POST", body: new URLSearchParams({ free_search: "", showsfilter: id }) });
+    return html.match(card)?.[1] || null;
+  },
+  // No trailing slash: "/feed/" answers with a 301 to "/feed".
+  feedPage: (slug, page) =>
+    fetch(`${BASE}/shows/${slug}/feed${page > 1 ? `?paged=${page}` : ""}`, { cache: "no-cache" }),
+  async showInfo(slug) {
+    return parseShowPage(await fetchText(`${BASE}/shows/${slug}/`));
+  },
+};
+
+const viaWorker = {
+  listShows: async () => (await fetchJson(`${API}/shows`)).shows,
+  lookupSlug: async id => (await fetchJson(`${API}/slug?id=${encodeURIComponent(id)}`)).slug,
+  feedPage: (slug, page) => fetch(`${API}/feed?slug=${encodeURIComponent(slug)}&page=${page}`),
+  showInfo: slug => fetchJson(`${API}/show?slug=${encodeURIComponent(slug)}`),
+};
+
+const source = ON_KZRADIO ? direct : viaWorker;
+
+async function fetchJson(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw httpError(r, url);
+  return r.json();
+}
+
 // Show list with names as kzradio.net shows them, from one request.
 // Slugs are looked up later, one show at a time, when the user picks it.
 async function loadCatalog() {
   if (state.catalogLoading) return;
   update({ catalogLoading: true, catalogError: null });
   try {
-    const html = await fetchPrefix(`${BASE}/last-shows`, t => {
-      const i = t.indexOf('name="showsfilter"');
-      return i >= 0 && t.indexOf("</select>", i) >= 0;
-    });
-    const found = parseShowFilter(html);
-    if (!found.length) throw new Error("show list not found on /last-shows");
+    const found = await source.listShows();
+    if (!found.length) throw new Error("show list not found on kzradio.net");
     const known = new Map((state.catalog || []).map(s => [s.id, s]));
     const shows = found.map(f => ({ ...known.get(f.id), id: f.id, name: f.name }));
     const fetchedAt = Date.now();
@@ -648,23 +696,12 @@ async function loadCatalog() {
   }
 }
 
-// Term id -> slug. Post the On Demand filter the way kzradio.net's own form
-// does (only these two fields: adding the other empty filters returns no
-// results), then read the show link in the first episode card.
-async function lookupSlug(id) {
-  const card = /od-show-name">\s*<a href="[^"]*\/shows\/([^/"?#]+)/;
-  const html = await fetchPrefix(`${BASE}/last-shows`,
-    t => card.test(t) || t.includes("results no-results"),
-    { method: "POST", body: new URLSearchParams({ free_search: "", showsfilter: id }) });
-  return html.match(card)?.[1] || null;
-}
-
 async function pickShow(show) {
   if (show.slug) { selectShow(show.slug); return; }
   update({ showOpen: false, showQuery: "", lookingUp: show.name });
   let slug = null, notice = null;
   try {
-    slug = await lookupSlug(show.id);
+    slug = await source.lookupSlug(show.id);
     if (!slug) notice = `No episodes found for "${show.name}"`;
   } catch (e) {
     notice = e.message;
@@ -686,12 +723,10 @@ async function fetchShow(slug) {
     episodesError:   { ...state.episodesError,   [slug]: null },
   });
   try {
-    // No trailing slash: "/feed/" answers with a 301 to "/feed".
-    const baseFeed = `${BASE}/shows/${slug}/feed`;
     const all = []; const seen = new Set();
     let channelTitle = "";
     for (let page = 1; page <= 200; page++) {
-      const r = await fetch(page === 1 ? baseFeed : `${baseFeed}?paged=${page}`, { cache: "no-cache" });
+      const r = await source.feedPage(slug, page);
       // WordPress answers 404 for the page after the last one.
       if (r.status === 404 && page > 1) break;
       if (!r.ok) throw httpError(r, r.url);
@@ -713,7 +748,7 @@ async function fetchShow(slug) {
     // The feed's channel image and description are station-wide; the show
     // page has the show's own image and description.
     let showPage = {};
-    try { showPage = parseShowPage(await fetchText(`${BASE}/shows/${slug}/`)); } catch {}
+    try { showPage = await source.showInfo(slug); } catch {}
 
     ls.set(STORE.epPrefix + slug, all);
     const prev = state.myShows[slug];
@@ -1493,9 +1528,22 @@ function importFavoritesFromHash() {
   setTimeout(() => update({ notice: null }), 6000);
 }
 
+// The old version of the app kept stars under these keys on this same site.
+function importOldAppFavorites() {
+  const old = { favEps: ls.get("kzradio.favorites.v1", null), favShows: ls.get("kzradio.favShows.v1", null) };
+  if (!old.favEps && !old.favShows) return;
+  update({
+    favEps: { ...old.favEps, ...state.favEps },
+    favShows: { ...old.favShows, ...state.favShows },
+  }, { favEps: true, favShows: true });
+  ls.remove("kzradio.favorites.v1");
+  ls.remove("kzradio.favShows.v1");
+}
+
 function start() {
   started = true;
   ls.remove("kzw.catalog.v1");
+  if (!ON_KZRADIO) importOldAppFavorites();
   $("showFavBtn").addEventListener("click", () => update({ showFavOnly: !state.showFavOnly }));
   $("epFavBtn").addEventListener("click",   () => update({ epFavOnly:   !state.epFavOnly }));
   wireCombobox("show");
@@ -1512,7 +1560,7 @@ function open() {
   if (!started) start();
   $("overlay").hidden = false;
   $("launcher").hidden = true;
-  document.documentElement.style.overflow = "hidden";
+  if (ON_KZRADIO) document.documentElement.style.overflow = "hidden";
   // Refresh the show list daily; slugs already found are kept by term id.
   if (!state.catalog || Date.now() - state.catalogFetchedAt > CATALOG_MAX_AGE_MS) {
     loadCatalog();
@@ -1537,5 +1585,5 @@ addEventListener("resize", placeLauncher);
 $("launcher").addEventListener("click", open);
 $("closeBtn").addEventListener("click", close);
 window.kzw = { open, close };
-if (window.kzwOpenOnLoad || location.hash.startsWith("#kzw-import=")) open();
+if (!ON_KZRADIO || window.kzwOpenOnLoad || location.hash.startsWith("#kzw-import=")) open();
 })();
