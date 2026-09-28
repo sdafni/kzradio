@@ -44,7 +44,7 @@ const CSS = `
 
   .launcher {
     position: fixed;
-    bottom: max(16px, env(safe-area-inset-bottom));
+    bottom: calc(var(--launcher-bottom, 16px) + env(safe-area-inset-bottom));
     inset-inline-start: 16px;
     z-index: 2147483646;
     width: 52px; height: 52px;
@@ -1549,6 +1549,15 @@ function close() {
   $("launcher").hidden = false;
   document.documentElement.style.overflow = "";
 }
+
+// kzradio.net has a fixed player bar at the bottom; keep the button above it.
+function placeLauncher() {
+  const bar = document.querySelector(".floating-bar")?.getBoundingClientRect();
+  const barHeight = bar && bar.height && bar.bottom >= innerHeight - 1 ? bar.height : 0;
+  host.style.setProperty("--launcher-bottom", `${Math.round(barHeight) + 16}px`);
+}
+placeLauncher();
+addEventListener("resize", placeLauncher);
 
 $("launcher").addEventListener("click", open);
 $("closeBtn").addEventListener("click", close);
