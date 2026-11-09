@@ -25,7 +25,7 @@ Android gets a one-tap install button; iPhone shows the Share -> Add to Home Scr
 
 kzradio.net rate-limits bursts (HTTP 429 after about 50 fast requests); the Worker's cache keeps most requests from reaching it.
 
-Only stars and the show list are saved, in the browser's `localStorage` under `kzw.*` keys. Episodes load fresh when you open a show and stay in memory while the app is open (reloaded after 12 hours). The show list refreshes daily.
+Saved in the browser's `localStorage` under `kzw.*` keys: stars, the show list, and the current show, episode and playback position (Android closes a backgrounded app's page; on reopen the app comes back paused where it was). Episodes load fresh when you open a show and stay in memory while the app is open (reloaded after 12 hours). The show list refreshes daily.
 
 ## Files
 

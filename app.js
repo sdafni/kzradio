@@ -399,6 +399,9 @@ const STORE = {
   favEps:     "kzw.favorites.v1",      // { [permalink]: { title, showName, mp3, image, ts } }
   favShows:   "kzw.favShows.v1",       // { [slug]:  { name, ts } }
   catalog:    "kzw.catalog.v2",        // { fetchedAt, shows: [{ id, name, slug?, empty? }] }
+  // What was on screen and in the player, so a reopened app picks up where
+  // it was: Android closes a backgrounded app's page, which then reloads.
+  session:    "kzw.session.v1",        // { showSlug, episode, playing: { ...episode, position } }
 };
 const CATALOG_MAX_AGE_MS = 24 * 3600 * 1000;
 // Episodes are kept in memory only; the app can stay open for days.
@@ -455,6 +458,7 @@ function update(patch, persist = {}) {
   Object.assign(state, patch);
   if (persist.favShows) ls.set(STORE.favShows, state.favShows);
   if (persist.favEps)   ls.set(STORE.favEps, state.favEps);
+  if ("selectedShowSlug" in patch || "selectedEpisodePermalink" in patch) saveSession();
   render();
 }
 
@@ -711,13 +715,18 @@ const SKIP_FORWARD_S = 30;
 
 let audioEl = null;
 let playingPermalink = null;   // the episode loaded into audioEl
+let playingEpisode = null;     // its details, saved so it survives a reload
+let resumeAt = null;           // position to jump to once a restored episode loads
 let seekDragging = false;
 
 function playEpisode(ep, showMeta) {
   if (!ep || !ep.mp3) return;
   ensureAudio();
   playingPermalink = ep.permalink;
+  playingEpisode = episodeSnapshot(ep, showMeta);
+  resumeAt = null;
   audioEl.src = ep.mp3;
+  saveSession();
   audioEl.play().catch(err => {
     // Random-from-any-show plays after loading; a browser may refuse that
     // without a fresh tap. The episode is selected, so Play is one tap away.
@@ -739,11 +748,64 @@ function ensureAudio() {
   if (audioEl) return audioEl;
   audioEl = document.createElement("audio");
   audioEl.preload = "none";
+  audioEl.addEventListener("loadedmetadata", () => {
+    if (resumeAt == null) return;
+    audioEl.currentTime = Math.min(resumeAt, audioEl.duration || resumeAt);
+    resumeAt = null;
+  });
   for (const ev of ["play", "pause", "timeupdate", "durationchange", "loadedmetadata", "ended", "emptied"]) {
     audioEl.addEventListener(ev, updatePlayer);
   }
+  audioEl.addEventListener("timeupdate", () => { if (Date.now() - lastSessionSave > 5000) saveSession(); });
+  audioEl.addEventListener("pause", saveSession);
   return audioEl;
 }
+
+// =========================================================================
+// session: survive the page being closed in the background
+// =========================================================================
+
+let lastSessionSave = 0;
+
+function episodeSnapshot(ep, showMeta) {
+  return {
+    permalink: ep.permalink, title: ep.title, mp3: ep.mp3, image: ep.image,
+    date: ep.date, tracks: ep.tracks, _slug: ep._slug || slugFromPermalink(ep.permalink),
+    showName: showMeta?.name || ep.showName || "", showImage: showMeta?.image || null,
+  };
+}
+
+function saveSession() {
+  lastSessionSave = Date.now();
+  const position = resumeAt ?? (audioEl ? Math.floor(audioEl.currentTime || 0) : 0);
+  ls.set(STORE.session, {
+    showSlug: state.selectedShowSlug,
+    episode: state.selectedEpisodePermalink,
+    playing: playingEpisode ? { ...playingEpisode, position } : null,
+  });
+}
+
+// Back to the saved show and episode, with the player paused where it was.
+// (Browsers do not let a page start sound before a tap.)
+function restoreSession() {
+  const s = ls.get(STORE.session, null);
+  if (!s) return;
+  if (s.playing?.mp3) {
+    const { position, ...ep } = s.playing;
+    ensureAudio();
+    playingPermalink = ep.permalink;
+    playingEpisode = ep;
+    resumeAt = position || 0;
+    audioEl.preload = "metadata";   // shows the length and position right away
+    audioEl.src = ep.mp3;
+    setMediaSession(ep, { name: ep.showName, image: ep.showImage });
+  }
+  if (s.episode) update({ selectedEpisodePermalink: s.episode });
+  if (s.showSlug) selectShow(s.showSlug, { keepEpisode: true });
+}
+
+addEventListener("pagehide", () => saveSession());
+document.addEventListener("visibilitychange", () => { if (document.hidden) saveSession(); });
 
 function seekBy(seconds) {
   if (!audioEl || !playingPermalink) return;
@@ -894,7 +956,12 @@ function findEpisodeWithMeta(permalink) {
     if (ep) return { ep, slug, showMeta: state.loaded[slug] };
   }
   const star = starredEpisodes().find(e => e.permalink === permalink);
-  if (!star) return null;
+  if (!star) {
+    // The episode in the player, restored before its show has loaded.
+    if (playingEpisode?.permalink !== permalink) return null;
+    const pe = playingEpisode;
+    return { ep: pe, slug: pe._slug, showMeta: state.loaded[pe._slug] || { name: pe.showName, image: pe.showImage } };
+  }
   return { ep: star, slug: star._slug, showMeta: state.loaded[star._slug] || { name: star.showName } };
 }
 
@@ -1429,6 +1496,8 @@ function resetSelections() {
     audioEl.load();
   }
   playingPermalink = null;
+  playingEpisode = null;
+  resumeAt = null;
   if ("mediaSession" in navigator) navigator.mediaSession.metadata = null;
   $("showInput").value = "";
   $("epInput").value = "";
@@ -1453,6 +1522,7 @@ function start() {
   }
   importOldAppFavorites();
   render();
+  restoreSession();
   // Refresh the show list daily; slugs already found are kept by term id.
   if (!state.catalog || Date.now() - state.catalogFetchedAt > CATALOG_MAX_AGE_MS) {
     loadCatalog();
