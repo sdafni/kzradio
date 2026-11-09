@@ -76,14 +76,15 @@ const CSS = `
   }
   header.app .status { color: var(--muted); font-size: 12px; }
   header.app .status.err { color: var(--danger); }
-  header.app .close {
+  header.app .close, header.app .reset {
     background: transparent; color: var(--muted);
     border: 1px solid var(--border); border-radius: 8px;
     font: inherit; font-size: 16px; line-height: 1;
     padding: 8px 12px; min-height: 36px;
     cursor: pointer; align-self: center;
   }
-  header.app .close:hover { color: var(--text); border-color: var(--text); }
+  header.app .close:hover, header.app .reset:hover { color: var(--text); border-color: var(--text); }
+  header.app .reset { font-size: 14px; }
 
   /* === selector === */
   section.selector {
@@ -341,6 +342,7 @@ const MARKUP = `<main>
   <header class="app">
     <h1>KZRadio · On Demand</h1>
     <span class="status" id="status"></span>
+    <button type="button" class="reset" id="resetBtn" title="Clear show, episode, searches and filters">↺ Reset</button>
     <button type="button" class="close" id="closeBtn" title="Back to kzradio.net" aria-label="Close">✕</button>
   </header>
 
@@ -1540,8 +1542,27 @@ function importOldAppFavorites() {
   ls.remove("kzradio.favShows.v1");
 }
 
+// Back to the start: no show or episode, empty searches, filters off. Also
+// stops playback, because the player lives in the episode panel.
+function resetSelections() {
+  if (audioEl) {
+    audioEl.pause();
+    audioEl.removeAttribute("src");
+    audioEl.load();
+  }
+  if ("mediaSession" in navigator) navigator.mediaSession.metadata = null;
+  $("showInput").value = "";
+  $("epInput").value = "";
+  update({
+    selectedShowSlug: null, selectedEpisodePermalink: null,
+    showQuery: "", epQuery: "", showFavOnly: false, epFavOnly: false,
+    showActive: -1, epActive: -1, showOpen: false, epOpen: false,
+  });
+}
+
 function start() {
   started = true;
+  $("resetBtn").addEventListener("click", resetSelections);
   ls.remove("kzw.catalog.v1");
   if (!ON_KZRADIO) importOldAppFavorites();
   $("showFavBtn").addEventListener("click", () => update({ showFavOnly: !state.showFavOnly }));
