@@ -1,18 +1,15 @@
-// KZRadio picker. Runs on www.kzradio.net, loaded by kzradio.user.js or the
-// bookmarklet from index.html. Same-origin, so it reads kzradio.net feeds
-// directly (no CORS proxy). UI lives in a shadow root so kzradio.net styles
-// and ours cannot leak into each other.
+// KZRadio picker, the app in index.html. kzradio.net cannot be read from the
+// browser (no CORS headers), so every read goes through our Worker, which
+// reads kzradio.net on the server (worker/).
 (() => {
 "use strict";
 
-if (window.kzw) { window.kzw.open(); return; }
+// Older versions also ran on kzradio.net through a userscript or bookmarklet,
+// which may still be installed and load this file there. Do nothing.
+if (location.hostname.endsWith("kzradio.net")) return;
 
 const APP_BASE = new URL(".", document.currentScript?.src || location.href).href;
 const BASE = "https://www.kzradio.net";
-// On kzradio.net (userscript/bookmarklet) we read the site directly. Anywhere
-// else (the installable app on GitHub Pages) kzradio.net cannot be read from
-// the browser, so we go through our Worker, which reads it on the server.
-const ON_KZRADIO = location.origin === BASE;
 const API = "https://kzradio-api.sdafni.workers.dev";
 
 const CSS = `
@@ -33,11 +30,8 @@ const CSS = `
     --ok: #7bd88f;
   }
   * { box-sizing: border-box; }
-  .overlay {
-    position: fixed; inset: 0;
-    z-index: 2147483647;
-    overflow-y: auto;
-    overscroll-behavior: contain;
+  .page {
+    min-height: 100vh;
     background: var(--bg); color: var(--text);
     font: 16px/1.5 -apple-system, "Segoe UI", "Heebo", "Arial Hebrew", Arial, sans-serif;
     text-align: start;
@@ -46,27 +40,7 @@ const CSS = `
     padding-bottom: max(16px, env(safe-area-inset-bottom));
     -webkit-tap-highlight-color: transparent;
   }
-  .overlay[hidden] { display: none; }
-  /* The installable app: the picker is the page itself. */
-  .overlay.app { position: static; overflow: visible; min-height: 100vh; }
-  .overlay.app ~ .launcher, .overlay.app .close { display: none; }
   main { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
-
-  .launcher {
-    position: fixed;
-    bottom: calc(var(--launcher-bottom, 16px) + env(safe-area-inset-bottom));
-    inset-inline-start: 16px;
-    z-index: 2147483646;
-    width: 52px; height: 52px;
-    border-radius: 50%;
-    border: none;
-    background: var(--accent); color: #1a1a1a;
-    font: 700 24px/1 -apple-system, "Segoe UI", Arial, sans-serif;
-    box-shadow: 0 4px 16px rgba(0,0,0,.4);
-    cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .launcher[hidden] { display: none; }
 
   header.app {
     display: flex; align-items: baseline; gap: 12px;
@@ -76,15 +50,14 @@ const CSS = `
   }
   header.app .status { color: var(--muted); font-size: 12px; }
   header.app .status.err { color: var(--danger); }
-  header.app .close, header.app .reset {
+  header.app .reset {
     background: transparent; color: var(--muted);
     border: 1px solid var(--border); border-radius: 8px;
-    font: inherit; font-size: 16px; line-height: 1;
+    font: inherit; font-size: 14px; line-height: 1;
     padding: 8px 12px; min-height: 36px;
     cursor: pointer; align-self: center;
   }
-  header.app .close:hover, header.app .reset:hover { color: var(--text); border-color: var(--text); }
-  header.app .reset { font-size: 14px; }
+  header.app .reset:hover { color: var(--text); border-color: var(--text); }
 
   /* === selector === */
   section.selector {
@@ -339,7 +312,6 @@ const MARKUP = `<main>
     <h1>KZRadio · On Demand</h1>
     <span class="status" id="status"></span>
     <button type="button" class="reset" id="resetBtn" title="Clear show, episode, searches and filters">↺ Reset</button>
-    <button type="button" class="close" id="closeBtn" title="Back to kzradio.net" aria-label="Close">✕</button>
   </header>
 
   <!-- Element 1: Show selector -->
@@ -377,21 +349,14 @@ const host = document.createElement("div");
 host.id = "kzw-host";
 document.body.appendChild(host);
 const root = host.attachShadow({ mode: "open" });
-root.innerHTML = `<style>${CSS}</style>
-  <button type="button" class="launcher" id="launcher" title="KZRadio picker" aria-label="Open KZRadio picker">&#9835;</button>
-  <div class="overlay" id="overlay" dir="rtl" hidden>${MARKUP}</div>`;
+root.innerHTML = `<style>${CSS}</style><div class="page" dir="rtl">${MARKUP}</div>`;
 const $ = id => root.getElementById(id);
-if (!ON_KZRADIO) $("overlay").classList.add("app");
-// Rendering waits for the first open: the userscript loads us on every
-// kzradio.net page, and most visits never open the picker.
-let started = false;
 
 
 // =========================================================================
 // constants & storage
 // =========================================================================
 
-// This is kzradio.net's localStorage, so our keys get a prefix the site won't use.
 const STORE = {
   favEps:     "kzw.favorites.v1",      // { [permalink]: { title, showName, mp3, image, ts } }
   favShows:   "kzw.favShows.v1",       // { [slug]:  { name, ts } }
@@ -456,7 +421,7 @@ function update(patch, persist = {}) {
 }
 
 // =========================================================================
-// network (same-origin with kzradio.net)
+// network (through the Worker)
 // =========================================================================
 
 function httpError(r, url) {
@@ -467,33 +432,18 @@ function httpError(r, url) {
   return e;
 }
 
-const sleep = ms => new Promise(res => setTimeout(res, ms));
-
-async function fetchText(url) {
-  const r = await fetch(url, { cache: "no-cache" });
+async function fetchJson(url) {
+  const r = await fetch(url);
   if (!r.ok) throw httpError(r, url);
-  return r.text();
+  return r.json();
 }
 
-// Read a response only until isDone(text) is true, then cancel the rest.
-// kzradio.net pages are ~300 KB, but what we need is in the first ~60 KB.
-async function fetchPrefix(url, isDone, init) {
-  const r = await fetch(url, init);
-  if (!r.ok) throw httpError(r, url);
-  if (!r.body?.getReader) return r.text();
-  const reader = r.body.getReader();
-  const decoder = new TextDecoder();
-  let text = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) return text;
-    text += decoder.decode(value, { stream: true });
-    if (isDone(text)) {
-      reader.cancel().catch(() => {});
-      return text;
-    }
-  }
-}
+const api = {
+  listShows: async () => (await fetchJson(`${API}/shows`)).shows,
+  lookupSlug: async id => (await fetchJson(`${API}/slug?id=${encodeURIComponent(id)}`)).slug,
+  feedPage: (slug, page) => fetch(`${API}/feed?slug=${encodeURIComponent(slug)}&page=${page}`),
+  showInfo: slug => fetchJson(`${API}/show?slug=${encodeURIComponent(slug)}`),
+};
 
 // =========================================================================
 // parsers
@@ -563,61 +513,10 @@ function htmlToText(html) {
   return new DOMParser().parseFromString(html, "text/html").body.textContent || "";
 }
 
-function parseShowPage(html) {
-  const doc = new DOMParser().parseFromString(html, "text/html");
-  let image = null;
-  let description = null;
-  let name = null;
-
-  // Show-specific image + name from JSON-LD
-  for (const script of doc.querySelectorAll('script[type="application/ld+json"]')) {
-    try {
-      const data = JSON.parse(script.textContent);
-      const graph = data["@graph"] || (Array.isArray(data) ? data : [data]);
-      for (const node of graph) {
-        if (node["@type"] === "CollectionPage") {
-          if (node.thumbnailUrl && !image) image = node.thumbnailUrl;
-          if (node.name && !name) name = node.name;
-        }
-      }
-    } catch {}
-  }
-
-  // Show description from <div class='show-desc'><p>
-  const descEl = doc.querySelector(".show-desc p");
-  if (descEl) {
-    description = descEl.textContent.replace(/\s+/g, " ").trim() || null;
-  }
-
-  // Display name: <h1> carries the clean show title; fall back to JSON-LD
-  // (handled above) then <title>/og:title, which append a " - KZradio ..." suffix.
-  const h1 = doc.querySelector("h1")?.textContent;
-  if (h1 && h1.trim()) name = h1;
-  if (!name) {
-    name = doc.querySelector('meta[property="og:title"]')?.getAttribute("content")
-        || doc.querySelector("title")?.textContent
-        || null;
-  }
-  return { name: cleanShowName(name), image, description };
-}
-
 // Page and feed titles look like "ALT-TLV - KZradio רדיו הקצה".
 function cleanShowName(name) {
   if (!name) return null;
   return name.replace(/\s+/g, " ").trim().replace(/\s*[-–|]\s*KZ ?radio.*$/i, "").trim() || null;
-}
-
-// kzradio.net's On Demand filter: <select name="showsfilter"> with one
-// <option value="{term id}">{show name}</option> per show.
-function parseShowFilter(html) {
-  const doc = new DOMParser().parseFromString(html, "text/html");
-  const shows = [];
-  for (const opt of doc.querySelectorAll('select[name="showsfilter"] option')) {
-    const id = (opt.getAttribute("value") || "").trim();
-    const name = opt.textContent.replace(/\s+/g, " ").trim();
-    if (/^\d+$/.test(id) && name) shows.push({ id, name });
-  }
-  return shows;
 }
 
 function extractSlug(input) {
@@ -633,55 +532,13 @@ function extractSlug(input) {
 // data ops: catalog, show RSS
 // =========================================================================
 
-// Same four reads, from kzradio.net itself or from the Worker.
-const direct = {
-  async listShows() {
-    const html = await fetchPrefix(`${BASE}/last-shows`, t => {
-      const i = t.indexOf('name="showsfilter"');
-      return i >= 0 && t.indexOf("</select>", i) >= 0;
-    });
-    return parseShowFilter(html);
-  },
-  // Post the On Demand filter the way kzradio.net's own form does (only these
-  // two fields: adding the other empty filters returns no results), then read
-  // the show link in the first episode card.
-  async lookupSlug(id) {
-    const card = /od-show-name">\s*<a href="[^"]*\/shows\/([^/"?#]+)/;
-    const html = await fetchPrefix(`${BASE}/last-shows`,
-      t => card.test(t) || t.includes("results no-results"),
-      { method: "POST", body: new URLSearchParams({ free_search: "", showsfilter: id }) });
-    return html.match(card)?.[1] || null;
-  },
-  // No trailing slash: "/feed/" answers with a 301 to "/feed".
-  feedPage: (slug, page) =>
-    fetch(`${BASE}/shows/${slug}/feed${page > 1 ? `?paged=${page}` : ""}`, { cache: "no-cache" }),
-  async showInfo(slug) {
-    return parseShowPage(await fetchText(`${BASE}/shows/${slug}/`));
-  },
-};
-
-const viaWorker = {
-  listShows: async () => (await fetchJson(`${API}/shows`)).shows,
-  lookupSlug: async id => (await fetchJson(`${API}/slug?id=${encodeURIComponent(id)}`)).slug,
-  feedPage: (slug, page) => fetch(`${API}/feed?slug=${encodeURIComponent(slug)}&page=${page}`),
-  showInfo: slug => fetchJson(`${API}/show?slug=${encodeURIComponent(slug)}`),
-};
-
-const source = ON_KZRADIO ? direct : viaWorker;
-
-async function fetchJson(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw httpError(r, url);
-  return r.json();
-}
-
 // Show list with names as kzradio.net shows them, from one request.
 // Slugs are looked up later, one show at a time, when the user picks it.
 async function loadCatalog() {
   if (state.catalogLoading) return;
   update({ catalogLoading: true, catalogError: null });
   try {
-    const found = await source.listShows();
+    const found = await api.listShows();
     if (!found.length) throw new Error("show list not found on kzradio.net");
     const known = new Map((state.catalog || []).map(s => [s.id, s]));
     const shows = found.map(f => ({ ...known.get(f.id), id: f.id, name: f.name }));
@@ -699,7 +556,7 @@ async function pickShow(show) {
   update({ showOpen: false, showQuery: "", lookingUp: show.name });
   let slug = null, notice = null;
   try {
-    slug = await source.lookupSlug(show.id);
+    slug = await api.lookupSlug(show.id);
     if (!slug) notice = `No episodes found for "${show.name}"`;
   } catch (e) {
     notice = e.message;
@@ -725,7 +582,7 @@ async function fetchShow(slug) {
     const all = []; const seen = new Set();
     let channelTitle = "";
     for (let page = 1; page <= 200; page++) {
-      const r = await source.feedPage(slug, page);
+      const r = await api.feedPage(slug, page);
       // WordPress answers 404 for the page after the last one.
       if (r.status === 404 && page > 1) break;
       if (!r.ok) throw httpError(r, r.url);
@@ -747,7 +604,7 @@ async function fetchShow(slug) {
     // The feed's channel image and description are station-wide; the show
     // page has the show's own image and description.
     let showPage = {};
-    try { showPage = await source.showInfo(slug); } catch {}
+    try { showPage = await api.showInfo(slug); } catch {}
 
     const prev = state.loaded[slug];
     const catalogName = state.catalog?.find(s => s.slug === slug)?.name;
@@ -1004,7 +861,6 @@ function selectEpisode(permalink, { play = false } = {}) {
 
 
 function render() {
-  if (!started) return;
   renderStatus();
   renderShowDropdown();
   renderShowSelected();
@@ -1432,29 +1288,8 @@ function wireCombobox(which) {
 }
 
 // =========================================================================
-// overlay, favorites import, boot
+// reset, boot
 // =========================================================================
-
-// Favorites saved on the old GitHub Pages app live in that origin's storage.
-// index.html sends them here as #kzw-import=<base64url JSON>.
-function importFavoritesFromHash() {
-  const m = location.hash.match(/^#kzw-import=([\w-]+)$/);
-  if (!m) return;
-  history.replaceState(null, "", location.pathname + location.search);
-  try {
-    const b64 = m[1].replace(/-/g, "+").replace(/_/g, "/");
-    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-    const data = JSON.parse(new TextDecoder().decode(bytes));
-    const favEps = { ...(data.favEps || {}), ...state.favEps };
-    const favShows = { ...(data.favShows || {}), ...state.favShows };
-    const added = Object.keys(favEps).length - Object.keys(state.favEps).length
-                + Object.keys(favShows).length - Object.keys(state.favShows).length;
-    update({ favEps, favShows, notice: `Imported ${added} favorites` }, { favEps: true, favShows: true });
-  } catch (e) {
-    update({ notice: `Favorites import failed: ${e.message}` });
-  }
-  setTimeout(() => update({ notice: null }), 6000);
-}
 
 // The old version of the app kept stars under these keys on this same site.
 function importOldAppFavorites() {
@@ -1487,51 +1322,24 @@ function resetSelections() {
 }
 
 function start() {
-  started = true;
   $("resetBtn").addEventListener("click", resetSelections);
-  ls.remove("kzw.catalog.v1");
-  if (!ON_KZRADIO) importOldAppFavorites();
   $("showFavBtn").addEventListener("click", () => update({ showFavOnly: !state.showFavOnly }));
   $("epFavBtn").addEventListener("click",   () => update({ epFavOnly:   !state.epFavOnly }));
   wireCombobox("show");
   wireCombobox("ep");
-  // Episodes and show details are no longer saved; free what older versions stored.
+  // Free what older versions saved: their show list format, episodes, show details.
+  ls.remove("kzw.catalog.v1");
   ls.remove("kzw.shows.v1");
   for (const key of Object.keys(localStorage)) {
     if (key.startsWith("kzw.episodes.v1.")) ls.remove(key);
   }
+  importOldAppFavorites();
   render();
-  importFavoritesFromHash();
-}
-
-function open() {
-  if (!started) start();
-  $("overlay").hidden = false;
-  $("launcher").hidden = true;
-  if (ON_KZRADIO) document.documentElement.style.overflow = "hidden";
   // Refresh the show list daily; slugs already found are kept by term id.
   if (!state.catalog || Date.now() - state.catalogFetchedAt > CATALOG_MAX_AGE_MS) {
     loadCatalog();
   }
 }
 
-function close() {
-  $("overlay").hidden = true;
-  $("launcher").hidden = false;
-  document.documentElement.style.overflow = "";
-}
-
-// kzradio.net has a fixed player bar at the bottom; keep the button above it.
-function placeLauncher() {
-  const bar = document.querySelector(".floating-bar")?.getBoundingClientRect();
-  const barHeight = bar && bar.height && bar.bottom >= innerHeight - 1 ? bar.height : 0;
-  host.style.setProperty("--launcher-bottom", `${Math.round(barHeight) + 16}px`);
-}
-placeLauncher();
-addEventListener("resize", placeLauncher);
-
-$("launcher").addEventListener("click", open);
-$("closeBtn").addEventListener("click", close);
-window.kzw = { open, close };
-if (!ON_KZRADIO || window.kzwOpenOnLoad || location.hash.startsWith("#kzw-import=")) open();
+start();
 })();
