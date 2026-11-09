@@ -24,7 +24,7 @@ The same `app.js` does both: on kzradio.net it reads the site directly, anywhere
 
 kzradio.net rate-limits bursts (HTTP 429 after about 50 fast requests), so the picker only requests what you open: one request for the show list, then a few per show you pick.
 
-Data is kept in the browser's `localStorage` under `kzw.*` keys (the app and kzradio.net each keep their own). The show list refreshes daily; a show's episodes refresh when you open it after 12 hours.
+Only stars and the show list are saved, in the browser's `localStorage` under `kzw.*` keys (the app and kzradio.net each keep their own). Episodes load fresh when you open a show and stay in memory while the app is open (reloaded after 12 hours). The show list refreshes daily.
 
 ## Files
 

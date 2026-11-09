@@ -185,10 +185,6 @@ const CSS = `
   .combobox .dropdown li.synthetic:hover { background: var(--panel-3); }
   .combobox .dropdown li .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .combobox .dropdown li .meta { color: var(--muted); font-size: 12px; flex-shrink: 0; }
-  .combobox .dropdown li .pill {
-    font-size: 10px; padding: 1px 6px; border-radius: 99px;
-    border: 1px solid var(--border); color: var(--muted); flex-shrink: 0;
-  }
   .combobox .dropdown li mark {
     background: rgba(255,204,51,0.25); color: var(--text); padding: 0 2px; border-radius: 3px;
   }
@@ -397,13 +393,12 @@ let started = false;
 
 // This is kzradio.net's localStorage, so our keys get a prefix the site won't use.
 const STORE = {
-  myShows:    "kzw.shows.v1",          // { [slug]: { name, image, description, episodeCount, lastFetched } }
-  epPrefix:   "kzw.episodes.v1.",      // + slug -> [episode, ...]
   favEps:     "kzw.favorites.v1",      // { [permalink]: { title, showName, mp3, image, ts } }
   favShows:   "kzw.favShows.v1",       // { [slug]:  { name, ts } }
   catalog:    "kzw.catalog.v2",        // { fetchedAt, shows: [{ id, name, slug?, empty? }] }
 };
 const CATALOG_MAX_AGE_MS = 24 * 3600 * 1000;
+// Episodes are kept in memory only; the app can stay open for days.
 const EPISODES_MAX_AGE_MS = 12 * 3600 * 1000;
 
 const ls = {
@@ -428,9 +423,10 @@ const state = {
   notice: null,
   lookingUp: null,       // name of the show whose slug is being looked up
 
-  myShows: ls.get(STORE.myShows, {}),
-  // episodes are lazy: state.episodes[slug] is the array; absence ≠ empty
-  episodes: {},
+  // Shows loaded while the app is open (memory only, not saved):
+  // loaded[slug] = { name, image, description, episodeCount, fetchedAt }
+  loaded: {},
+  episodes: {},          // { slug: [episode, ...] }
   episodesLoading: {},   // { slug: true }
   episodesError: {},     // { slug: msg }
 
@@ -454,7 +450,6 @@ const state = {
 
 function update(patch, persist = {}) {
   Object.assign(state, patch);
-  if (persist.myShows)  ls.set(STORE.myShows, state.myShows);
   if (persist.favShows) ls.set(STORE.favShows, state.favShows);
   if (persist.favEps)   ls.set(STORE.favEps, state.favEps);
   render();
@@ -698,8 +693,9 @@ async function loadCatalog() {
   }
 }
 
+// Resolves with the slug (null if none) once the show's episodes are in.
 async function pickShow(show) {
-  if (show.slug) { selectShow(show.slug); return; }
+  if (show.slug) { await selectShow(show.slug); return show.slug; }
   update({ showOpen: false, showQuery: "", lookingUp: show.name });
   let slug = null, notice = null;
   try {
@@ -714,7 +710,8 @@ async function pickShow(show) {
   ls.set(STORE.catalog, { fetchedAt: state.catalogFetchedAt, shows });
   update({ catalog: shows, lookingUp: null, notice });
   if (notice) setTimeout(() => update({ notice: null }), 6000);
-  if (slug) selectShow(slug);
+  if (slug) await selectShow(slug);
+  return slug;
 }
 
 async function fetchShow(slug) {
@@ -752,24 +749,23 @@ async function fetchShow(slug) {
     let showPage = {};
     try { showPage = await source.showInfo(slug); } catch {}
 
-    ls.set(STORE.epPrefix + slug, all);
-    const prev = state.myShows[slug];
+    const prev = state.loaded[slug];
     const catalogName = state.catalog?.find(s => s.slug === slug)?.name;
-    const myShows = {
-      ...state.myShows,
+    const loaded = {
+      ...state.loaded,
       [slug]: {
         name: showPage.name || catalogName || cleanShowName(channelTitle) || prev?.name || slug,
         image: showPage.image || prev?.image || null,
         description: showPage.description || prev?.description || null,
         episodeCount: all.length,
-        lastFetched: Date.now(),
+        fetchedAt: Date.now(),
       },
     };
     update({
-      myShows,
+      loaded,
       episodes: { ...state.episodes, [slug]: all },
       episodesLoading: { ...state.episodesLoading, [slug]: false },
-    }, { myShows: true });
+    });
   } catch (e) {
     update({
       episodesLoading: { ...state.episodesLoading, [slug]: false },
@@ -778,26 +774,8 @@ async function fetchShow(slug) {
   }
 }
 
-function loadEpisodesFromCacheIfNeeded(slug) {
-  if (!slug) return;
-  if (state.episodes[slug]) return;
-  const cached = ls.get(STORE.epPrefix + slug, null);
-  if (cached) {
-    state.episodes = { ...state.episodes, [slug]: cached };
-  }
-}
-
-function removeShow(slug) {
-  const my = { ...state.myShows }; delete my[slug];
-  const eps = { ...state.episodes }; delete eps[slug];
-  ls.remove(STORE.epPrefix + slug);
-  const patch = { myShows: my, episodes: eps };
-  if (state.selectedShowSlug === slug) {
-    patch.selectedShowSlug = null;
-    patch.selectedEpisodePermalink = null;
-    patch.epQuery = "";
-  }
-  update(patch, { myShows: true });
+function slugFromPermalink(url) {
+  return (url || "").match(/\/shows\/([^/?#]+)\//)?.[1] || null;
 }
 
 // =========================================================================
@@ -805,7 +783,7 @@ function removeShow(slug) {
 // =========================================================================
 
 function toggleFavShow(slug) {
-  const meta = state.myShows[slug] || state.catalog?.find(s => s.slug === slug);
+  const meta = state.loaded[slug] || state.catalog?.find(s => s.slug === slug);
   if (!meta) return;
   const f = { ...state.favShows };
   if (f[slug]) { delete f[slug]; }
@@ -818,7 +796,8 @@ function toggleFavEpisode(ep) {
   const f = { ...state.favEps };
   if (f[ep.permalink]) { delete f[ep.permalink]; }
   else {
-    const showName = state.myShows[state.selectedShowSlug]?.name || "";
+    const slug = ep._slug || slugFromPermalink(ep.permalink);
+    const showName = state.loaded[slug]?.name || state.catalog?.find(s => s.slug === slug)?.name || "";
     f[ep.permalink] = {
       title: ep.title, mp3: ep.mp3, image: ep.image,
       showName, ts: Date.now(),
@@ -837,6 +816,9 @@ function playEpisode(ep, showMeta) {
   ensureAudio();
   audioEl.src = ep.mp3;
   audioEl.play().catch(err => {
+    // Random-from-any-show plays after loading; a browser may refuse that
+    // without a fresh tap. The episode is selected, so Play is one tap away.
+    if (err.name === "NotAllowedError") return;
     const sel = $("epSelected");
     sel.querySelector(".err-line")?.remove();
     const e = document.createElement("div");
@@ -883,9 +865,8 @@ function setMediaSession(ep, showMeta) {
 }
 
 function stepEpisode(delta) {
-  // Walk the same list the user is currently viewing (which may be the
-  // current show's episodes OR the all-cached aggregate when no show
-  // is selected).
+  // Walk the list the user is looking at: the show's episodes, or the
+  // starred episodes when no show is selected.
   const eps = filteredEpisodes(state.selectedShowSlug);
   const idx = eps.findIndex(e => e.permalink === state.selectedEpisodePermalink);
   if (idx < 0) return;
@@ -909,7 +890,7 @@ function getCombinedShows() {
     byKey.set(s.slug || `id:${s.id}`, entry);
     if (s.slug) bySlug.set(s.slug, entry);
   }
-  for (const [slug, meta] of Object.entries(state.myShows)) {
+  for (const [slug, meta] of Object.entries(state.loaded)) {
     const entry = bySlug.get(slug);
     if (entry) {
       entry.image = meta.image || null;
@@ -930,66 +911,58 @@ function filteredShows() {
   return list;
 }
 
+// The selected show's episodes, newest first; with no show selected, the
+// starred episodes, most recently starred first. Items carry _slug so
+// rendering and playback know their show.
 function filteredEpisodes(slug) {
-  // When slug is null we're in "browse all" mode: aggregate every cached
-  // episode across all shows. We tag each item with _slug so render code
-  // and playback can recover its show context.
-  let list;
-  if (slug) {
-    list = (state.episodes[slug] || []).map(e => ({ ...e, _slug: slug }));
-  } else {
-    list = [];
-    for (const [s, eps] of Object.entries(state.episodes)) {
-      if (!Array.isArray(eps)) continue;
-      for (const e of eps) list.push({ ...e, _slug: s });
-    }
-  }
+  let list = slug
+    ? (state.episodes[slug] || []).map(e => ({ ...e, _slug: slug }))
+        .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
+    : starredEpisodes();
   const q = state.epQuery.trim().toLowerCase();
   if (q) list = list.filter(e => (e.title || "").toLowerCase().includes(q));
-  if (state.epFavOnly) list = list.filter(e => !!state.favEps[e.permalink]);
-  list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  if (slug && state.epFavOnly) list = list.filter(e => !!state.favEps[e.permalink]);
   return list;
 }
 
-// All cached episodes for a slug (or across all shows when slug is null),
-// ignoring the favorites filter and search query. Used for the "🎲 Random"
-// buttons so picking random truly samples from everything — not just the
-// currently-filtered subset.
-function allEpisodes(slug) {
-  if (slug) {
-    return (state.episodes[slug] || []).map(e => ({ ...e, _slug: slug }));
-  }
-  const list = [];
-  for (const [s, eps] of Object.entries(state.episodes)) {
-    if (!Array.isArray(eps)) continue;
-    for (const e of eps) list.push({ ...e, _slug: s });
-  }
-  return list;
+// Stars keep title, mp3 and image, so they play without loading their show.
+function starredEpisodes() {
+  return Object.entries(state.favEps)
+    .map(([permalink, f]) => ({
+      permalink, title: f.title, mp3: f.mp3, image: f.image,
+      showName: f.showName, ts: f.ts, _slug: slugFromPermalink(permalink),
+    }))
+    .sort((a, b) => (b.ts || 0) - (a.ts || 0));
 }
 
 function findEpisodeWithMeta(permalink) {
-  // Prefer the selected show; otherwise scan everything cached.
-  const tryIn = slug => {
-    const eps = state.episodes[slug] || [];
-    const ep = eps.find(e => e.permalink === permalink);
-    if (ep) return { ep, slug, showMeta: state.myShows[slug] };
-    return null;
-  };
-  if (state.selectedShowSlug) {
-    const got = tryIn(state.selectedShowSlug);
-    if (got) return got;
+  // A loaded copy has the date and track listing; prefer the selected show.
+  const slugs = [state.selectedShowSlug, ...Object.keys(state.episodes)].filter(Boolean);
+  for (const slug of slugs) {
+    const ep = (state.episodes[slug] || []).find(e => e.permalink === permalink);
+    if (ep) return { ep, slug, showMeta: state.loaded[slug] };
   }
-  for (const slug of Object.keys(state.episodes)) {
-    const got = tryIn(slug);
-    if (got) return got;
-  }
-  return null;
+  const star = starredEpisodes().find(e => e.permalink === permalink);
+  if (!star) return null;
+  return { ep: star, slug: star._slug, showMeta: state.loaded[star._slug] || { name: star.showName } };
 }
 
-function totalCachedEpisodes() {
-  let n = 0;
-  for (const v of Object.values(state.episodes)) n += Array.isArray(v) ? v.length : 0;
-  return n;
+function randomItem(list) {
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+// Random show from the whole list, then a random episode from it.
+async function randomEpisodeFromAnyShow() {
+  const shows = getCombinedShows();
+  // A few tries: some entries in kzradio.net's list turn out to be empty.
+  for (let i = 0; i < 3 && shows.length; i++) {
+    const slug = await pickShow(randomItem(shows));
+    const eps = slug && state.episodes[slug];
+    if (eps?.length) {
+      selectEpisode(randomItem(eps).permalink, { play: true });
+      return;
+    }
+  }
 }
 
 function selectShow(slug, { keepEpisode = false } = {}) {
@@ -1004,15 +977,13 @@ function selectShow(slug, { keepEpisode = false } = {}) {
     patch.epQuery = "";
   }
   update(patch);
-  loadEpisodesFromCacheIfNeeded(slug);
-  const lastFetched = state.myShows[slug]?.lastFetched || 0;
-  const stale = Date.now() - lastFetched > EPISODES_MAX_AGE_MS;
-  // Missing or old: fetch. The cached list stays visible while it loads.
+  const fetchedAt = state.loaded[slug]?.fetchedAt || 0;
+  const stale = Date.now() - fetchedAt > EPISODES_MAX_AGE_MS;
+  // Not loaded yet, or old: fetch. An old list stays visible while it loads.
   if (slug && (!state.episodes[slug] || stale) && !state.episodesLoading[slug]) {
-    fetchShow(slug);
-  } else {
-    render();
+    return fetchShow(slug);
   }
+  return Promise.resolve();
 }
 
 function selectEpisode(permalink, { play = false } = {}) {
@@ -1046,15 +1017,11 @@ function renderStatus() {
   const el = $("status");
   el.classList.toggle("err", state.storageFull);
   if (state.storageFull) {
-    el.textContent = "Storage full: new episodes are not saved for next time";
+    el.textContent = "Storage full: star changes are not saved";
     return;
   }
   if (state.notice) { el.textContent = state.notice; return; }
-  const myCount = Object.keys(state.myShows).length;
-  const epTotal = Object.values(state.myShows).reduce((s, m) => s + (m.episodeCount || 0), 0);
-  if (myCount === 0 && !state.catalog) el.textContent = "starting up…";
-  else if (myCount === 0) el.textContent = `${state.catalog?.length || 0} shows`;
-  else el.textContent = `${myCount} added · ${epTotal} episodes cached`;
+  el.textContent = state.catalog ? `${getCombinedShows().length} shows` : "starting up…";
 }
 
 // ---- show dropdown ----
@@ -1109,17 +1076,14 @@ function renderShowDropdown() {
     const s = items[i];
     const li = document.createElement("li");
     if (i === state.showActive) li.classList.add("active");
-    const added = !!state.myShows[s.slug];
     const fav = !!state.favShows[s.slug];
-    const epCount = state.myShows[s.slug]?.episodeCount;
-    const img = s.image || state.myShows[s.slug]?.image;
-    const desc = s.description || state.myShows[s.slug]?.description;
+    const img = s.image;
+    const desc = s.description;
     li.innerHTML = `
       ${img
         ? `<img class="avatar" src="${escapeAttr(img)}" alt="" loading="lazy" />`
         : `<span class="avatar ph"></span>`}
       <span class="label">${fav ? "★ " : ""}${highlight(s.name, q)}</span>
-      ${added ? `<span class="meta">${epCount ?? "—"} eps</span>` : `<span class="pill">+ add</span>`}
       ${desc ? `<span class="info-icon" title="${escapeAttr(desc)}" aria-label="Show description">i</span>` : ""}
     `;
     li.addEventListener("mousedown", e => e.preventDefault());
@@ -1159,15 +1123,13 @@ function renderShowSelected() {
       : `<span class="spinner"></span> Loading the show list from kzradio.net…`;
     div.querySelector("#randomShowBtn")?.addEventListener("click", () => {
       const all = getCombinedShows();
-      if (!all.length) return;
-      const pick = all[Math.floor(Math.random() * all.length)];
-      pickShow(pick);
+      if (all.length) pickShow(randomItem(all));
     });
     return;
   }
 
   div.classList.remove("placeholder");
-  const myMeta = state.myShows[slug];
+  const myMeta = state.loaded[slug];
   const catMeta = state.catalog?.find(s => s.slug === slug);
   const name  = myMeta?.name || catMeta?.name || slug;
   const image = myMeta?.image;
@@ -1180,12 +1142,8 @@ function renderShowSelected() {
     sub = `<span class="spinner"></span> Fetching episodes…`;
   } else if (state.episodesError[slug]) {
     sub = `<span class="err">${escapeHtml(state.episodesError[slug])}</span>`;
-  } else if (myMeta) {
-    sub = `${myMeta.episodeCount} episodes · last fetched ${formatRelative(myMeta.lastFetched)}
-           · <a href="${BASE}/shows/${slug}/" target="_blank" rel="noopener">↗</a>`;
   } else {
-    sub = `Not yet fetched — pick to load episodes
-           · <a href="${BASE}/shows/${slug}/" target="_blank" rel="noopener">↗</a>`;
+    sub = `${myMeta ? `${myMeta.episodeCount} episodes · ` : ""}<a href="${BASE}/shows/${slug}/" target="_blank" rel="noopener">↗</a>`;
   }
 
   div.innerHTML = `
@@ -1198,31 +1156,20 @@ function renderShowSelected() {
         </div>
         <div class="sub">${sub}</div>
       </div>
-      <button class="clear-x" id="showClearBtn" title="Clear selection (browse all episodes)" aria-label="Clear show">✕</button>
+      <button class="clear-x" id="showClearBtn" title="Clear selection" aria-label="Clear show">✕</button>
     </div>
     <div class="actions">
       <button class="star ${fav ? "on" : ""}" id="showStarBtn">${fav ? "★ Starred" : "☆ Star"}</button>
-      ${myMeta ? `<button id="showRefreshBtn" ${state.episodesLoading[slug] ? "disabled" : ""}>⟳ Refresh</button>` : ""}
-      ${myMeta ? `<button class="danger" id="showRemoveBtn">✕ Remove</button>` : ""}
-      ${myMeta && (myMeta.episodeCount || 0) > 0 ? `<button class="primary" id="randomEpBtn">🎲 Random episode</button>` : ""}
+      ${state.episodes[slug]?.length ? `<button class="primary" id="randomEpBtn">🎲 Random episode</button>` : ""}
       ${state.episodesError[slug] ? `<button id="showRetryBtn">↻ Retry</button>` : ""}
     </div>
   `;
   div.querySelector("#showClearBtn")?.addEventListener("click", () => selectShow(null));
   div.querySelector("#showStarBtn")?.addEventListener("click", () => toggleFavShow(slug));
-  div.querySelector("#showRefreshBtn")?.addEventListener("click", () => fetchShow(slug));
   div.querySelector("#showRetryBtn")?.addEventListener("click", () => fetchShow(slug));
-  div.querySelector("#showRemoveBtn")?.addEventListener("click", () => {
-    if (!confirm(`Remove "${name}" from My Shows? Stars are kept.`)) return;
-    removeShow(slug);
-  });
+  // From all the show's episodes, not the filtered list.
   div.querySelector("#randomEpBtn")?.addEventListener("click", () => {
-    // Random must sample across ALL cached episodes for this show,
-    // not the currently-filtered list (which may be favorites-only).
-    const eps = allEpisodes(slug);
-    if (!eps.length) return;
-    const pick = eps[Math.floor(Math.random() * eps.length)];
-    selectEpisode(pick.permalink, { play: true });
+    selectEpisode(randomItem(state.episodes[slug]).permalink, { play: true });
   });
 }
 
@@ -1230,17 +1177,16 @@ function renderShowSelected() {
 
 function renderEpFilterButton() {
   const slug = state.selectedShowSlug;
-  const haveEps = slug
-    ? (state.episodes[slug]?.length || 0) > 0
-    : totalCachedEpisodes() > 0;
-  $("epFavBtn").disabled = !haveEps;
-  $("epFavBtn").classList.toggle("on", state.epFavOnly);
+  const starred = Object.keys(state.favEps).length;
+  const haveEps = slug ? (state.episodes[slug]?.length || 0) > 0 : starred > 0;
+  // With no show selected the list already is the starred episodes.
+  $("epFavBtn").disabled = !slug || !haveEps;
+  $("epFavBtn").classList.toggle("on", !!slug && state.epFavOnly);
   $("epInput").disabled = !haveEps;
   if (!haveEps) $("epInput").value = "";
-  // give a hint about the current scope
   $("epInput").placeholder = slug
     ? "חיפוש פרקים / Search…"
-    : (haveEps ? `Search across ${totalCachedEpisodes()} cached episodes…` : "חיפוש פרקים / Search…");
+    : (haveEps ? `Search your ${starred} starred episode${starred === 1 ? "" : "s"}…` : "Pick a show first");
 
   $("showFavBtn").classList.toggle("on", state.showFavOnly);
 }
@@ -1253,14 +1199,7 @@ function renderEpDropdown() {
 
   const slug = state.selectedShowSlug;
 
-  // No show selected: aggregate-all mode
-  if (!slug) {
-    if (totalCachedEpisodes() === 0) {
-      const li = document.createElement("li"); li.className = "empty";
-      li.textContent = "No episodes cached yet — pick a show to fetch some.";
-      ul.appendChild(li); return;
-    }
-  } else {
+  if (slug) {
     if (state.episodesLoading[slug] && !state.episodes[slug]) {
       const li = document.createElement("li"); li.className = "empty";
       li.innerHTML = `<span class="spinner"></span><span>Loading episodes…</span>`;
@@ -1276,7 +1215,8 @@ function renderEpDropdown() {
   const items = filteredEpisodes(slug);
   if (!items.length) {
     const li = document.createElement("li"); li.className = "empty";
-    if (state.epFavOnly) li.textContent = slug ? "No starred episodes for this show." : "No starred episodes.";
+    if (!slug && !Object.keys(state.favEps).length) li.textContent = "No starred episodes yet.";
+    else if (slug && state.epFavOnly) li.textContent = "No starred episodes for this show.";
     else li.textContent = "No episodes match.";
     ul.appendChild(li); return;
   }
@@ -1290,8 +1230,8 @@ function renderEpDropdown() {
     if (i === state.epActive) li.classList.add("active");
     const fav = !!state.favEps[ep.permalink];
     const datePrefix = ep.date ? `${ep.date} · ` : "";
-    const showMeta = state.myShows[ep._slug];
-    const showName = showAcross ? (showMeta?.name || ep._slug) : "";
+    const showMeta = state.loaded[ep._slug];
+    const showName = showAcross ? (showMeta?.name || ep.showName || ep._slug) : "";
     const img = ep.image || showMeta?.image;
     const desc = showMeta?.description;
     li.innerHTML = `
@@ -1322,7 +1262,6 @@ function renderEpSelected() {
   const div = $("epSelected");
   const slug = state.selectedShowSlug;
   const permalink = state.selectedEpisodePermalink;
-  const totalCached = totalCachedEpisodes();
 
   // Loading a specific show
   if (slug && state.episodesLoading[slug] && !state.episodes[slug]) {
@@ -1341,21 +1280,16 @@ function renderEpSelected() {
              <button id="randomEpBtn2" class="primary">🎲 Random</button>
            </div>`
         : `No episodes available.`;
-    } else if (totalCached > 0) {
-      div.innerHTML = `Browse all <strong>${totalCached}</strong> cached episodes above, or
+    } else {
+      div.innerHTML = `Pick a show, or a random episode from any show:
         <div class="actions" style="justify-content:center;margin-top:10px;">
           <button id="randomEpBtn2" class="primary">🎲 Random across all</button>
         </div>`;
-    } else {
-      div.innerHTML = `No episodes cached. Pick a show first.`;
     }
+    // From all episodes, not the filtered list.
     div.querySelector("#randomEpBtn2")?.addEventListener("click", () => {
-      // Use all cached episodes (not the filtered subset) so toggling the
-      // favorites filter doesn't make "random" pick only from favorites.
-      const list = allEpisodes(slug);
-      if (!list.length) return;
-      const pick = list[Math.floor(Math.random() * list.length)];
-      selectEpisode(pick.permalink, { play: true });
+      if (slug) selectEpisode(randomItem(state.episodes[slug]).permalink, { play: true });
+      else randomEpisodeFromAnyShow();
     });
     return;
   }
@@ -1364,7 +1298,7 @@ function renderEpSelected() {
   const found = findEpisodeWithMeta(permalink);
   if (!found) {
     div.classList.add("placeholder");
-    div.innerHTML = `Episode not found in cache.`;
+    div.innerHTML = `Episode not found.`;
     return;
   }
   div.classList.remove("placeholder");
@@ -1434,14 +1368,6 @@ function highlight(text, q) {
   const idx = t.toLowerCase().indexOf(q.toLowerCase());
   if (idx < 0) return escapeHtml(t);
   return `${escapeHtml(t.slice(0, idx))}<mark>${escapeHtml(t.slice(idx, idx+q.length))}</mark>${escapeHtml(t.slice(idx+q.length))}`;
-}
-function formatRelative(ms) {
-  if (!ms) return "never";
-  const s = Math.floor((Date.now() - ms) / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s/60)}m ago`;
-  if (s < 86400) return `${Math.floor(s/3600)}h ago`;
-  return `${Math.floor(s/86400)}d ago`;
 }
 
 // =========================================================================
@@ -1569,9 +1495,10 @@ function start() {
   $("epFavBtn").addEventListener("click",   () => update({ epFavOnly:   !state.epFavOnly }));
   wireCombobox("show");
   wireCombobox("ep");
-  for (const slug of Object.keys(state.myShows)) {
-    const cached = ls.get(STORE.epPrefix + slug, null);
-    if (cached) state.episodes[slug] = cached;
+  // Episodes and show details are no longer saved; free what older versions stored.
+  ls.remove("kzw.shows.v1");
+  for (const key of Object.keys(localStorage)) {
+    if (key.startsWith("kzw.episodes.v1.")) ls.remove(key);
   }
   render();
   importFavoritesFromHash();
