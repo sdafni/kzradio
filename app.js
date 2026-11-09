@@ -272,7 +272,45 @@ const CSS = `
     align-self: flex-start;
   }
   .selected .row1 .clear-x:hover { color: var(--danger); border-color: var(--danger); }
-  .selected audio { width: 100%; margin-top: 12px; }
+  /* Player: big buttons like Android's media notification. Left to right,
+     like every media control, even though the page is right to left. */
+  .player { margin-top: 14px; }
+  .player .seek {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 28px; margin: 0; background: transparent; cursor: pointer;
+  }
+  .player .seek::-webkit-slider-runnable-track {
+    height: 4px; border-radius: 2px;
+    background: linear-gradient(to right, var(--accent) var(--pct, 0%), var(--border) var(--pct, 0%));
+  }
+  .player .seek::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 18px; height: 18px; margin-top: -7px;
+    border-radius: 50%; background: var(--accent);
+  }
+  .player .seek::-moz-range-track { height: 4px; border-radius: 2px; background: var(--border); }
+  .player .seek::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--accent); }
+  .player .seek::-moz-range-thumb { width: 18px; height: 18px; border: none; border-radius: 50%; background: var(--accent); }
+  .player .seek:disabled { opacity: 0.4; cursor: default; }
+  .player .times {
+    display: flex; justify-content: space-between;
+    font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
+  }
+  .player .controls {
+    display: flex; justify-content: center; align-items: center;
+    gap: clamp(6px, 4vw, 24px); margin-top: 6px;
+  }
+  .player .ctl {
+    width: 52px; height: 52px; padding: 0; border: none; border-radius: 50%;
+    background: transparent; color: var(--text); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .player .ctl svg { width: 30px; height: 30px; fill: currentColor; }
+  .player .ctl:active { background: var(--panel-3); }
+  .player .ctl.play { width: 68px; height: 68px; background: var(--accent); color: #1a1a1a; }
+  .player .ctl.play svg { width: 38px; height: 38px; }
+  .player .ctl.play:active { background: var(--accent-2); }
+  .player .ctl:disabled { opacity: 0.3; cursor: default; background: transparent; }
+  .player .ctl.play:disabled { background: var(--accent); }
   .selected .err { color: var(--danger); }
   .selected .ok { color: var(--ok); }
 
@@ -667,10 +705,18 @@ function toggleFavEpisode(ep) {
 // playback
 // =========================================================================
 
+// Same jumps as the lock-screen and notification controls.
+const SKIP_BACK_S = 15;
+const SKIP_FORWARD_S = 30;
+
 let audioEl = null;
+let playingPermalink = null;   // the episode loaded into audioEl
+let seekDragging = false;
+
 function playEpisode(ep, showMeta) {
   if (!ep || !ep.mp3) return;
   ensureAudio();
+  playingPermalink = ep.permalink;
   audioEl.src = ep.mp3;
   audioEl.play().catch(err => {
     // Random-from-any-show plays after loading; a browser may refuse that
@@ -687,13 +733,62 @@ function playEpisode(ep, showMeta) {
   setMediaSession(ep, showMeta);
 }
 
+// The element has no controls of its own and is never put on the page; the
+// player in the episode panel drives it and follows its events.
 function ensureAudio() {
   if (audioEl) return audioEl;
   audioEl = document.createElement("audio");
-  audioEl.controls = true;
   audioEl.preload = "none";
+  for (const ev of ["play", "pause", "timeupdate", "durationchange", "loadedmetadata", "ended", "emptied"]) {
+    audioEl.addEventListener(ev, updatePlayer);
+  }
   return audioEl;
 }
+
+function seekBy(seconds) {
+  if (!audioEl || !playingPermalink) return;
+  const end = Number.isFinite(audioEl.duration) ? audioEl.duration : Infinity;
+  audioEl.currentTime = Math.min(Math.max(0, audioEl.currentTime + seconds), end);
+}
+
+function formatTime(sec) {
+  if (!Number.isFinite(sec)) return "--:--";
+  sec = Math.floor(sec);
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  return `${h ? `${h}:${String(m).padStart(2, "0")}` : m}:${String(s).padStart(2, "0")}`;
+}
+
+// Bring the player in the episode panel in line with audioEl.
+function updatePlayer() {
+  const seek = $("seekBar");
+  if (!seek) return;
+  const active = !!audioEl && playingPermalink === state.selectedEpisodePermalink;
+  const duration = active && Number.isFinite(audioEl.duration) ? audioEl.duration : 0;
+  const time = active ? audioEl.currentTime : 0;
+  seek.disabled = !duration;
+  seek.max = String(duration || 0);
+  if (!seekDragging) seek.value = String(time);
+  seek.style.setProperty("--pct", `${duration ? (Number(seek.value) / duration) * 100 : 0}%`);
+  $("timeNow").textContent = formatTime(seekDragging ? Number(seek.value) : time);
+  $("timeTotal").textContent = duration ? formatTime(duration) : "--:--";
+  const playing = active && !audioEl.paused;
+  $("playBtn").innerHTML = playing ? ICONS.pause : ICONS.play;
+  $("playBtn").setAttribute("aria-label", playing ? "Pause" : "Play");
+  $("backBtn").disabled = !active;
+  $("fwdBtn").disabled = !active;
+}
+
+// Material Design icons (Apache 2.0); the skip icons carry their seconds.
+const skipIcon = (path, seconds) =>
+  `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"/><text x="12" y="16" text-anchor="middle" font-size="6.5" font-weight="700" font-family="Arial, sans-serif">${seconds}</text></svg>`;
+const ICONS = {
+  play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>',
+  prev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>',
+  next: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>',
+  back: skipIcon("M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z", SKIP_BACK_S),
+  fwd: skipIcon("M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z", SKIP_FORWARD_S),
+};
 
 function setMediaSession(ep, showMeta) {
   if (!("mediaSession" in navigator)) return;
@@ -710,14 +805,13 @@ function setMediaSession(ep, showMeta) {
     });
     navigator.mediaSession.setActionHandler("play",  () => audioEl?.play());
     navigator.mediaSession.setActionHandler("pause", () => audioEl?.pause());
-    navigator.mediaSession.setActionHandler("seekbackward", () => {
-      if (audioEl) audioEl.currentTime = Math.max(0, audioEl.currentTime - 15);
-    });
-    navigator.mediaSession.setActionHandler("seekforward", () => {
-      if (audioEl) audioEl.currentTime = Math.min(audioEl.duration || 0, audioEl.currentTime + 30);
-    });
+    navigator.mediaSession.setActionHandler("seekbackward", () => seekBy(-SKIP_BACK_S));
+    navigator.mediaSession.setActionHandler("seekforward",  () => seekBy(SKIP_FORWARD_S));
     navigator.mediaSession.setActionHandler("previoustrack", () => stepEpisode(-1));
     navigator.mediaSession.setActionHandler("nexttrack",     () => stepEpisode(+1));
+    // Lets the notification's progress bar be dragged; last, as older
+    // browsers throw on actions they do not know.
+    navigator.mediaSession.setActionHandler("seekto", d => { if (audioEl) audioEl.currentTime = d.seekTime; });
   } catch {}
 }
 
@@ -1169,6 +1263,9 @@ function renderEpSelected() {
     : escapeHtml(showLabel);
 
   const epShowDesc = showMeta?.description;
+  // Same list as stepEpisode, to grey out previous/next at its ends.
+  const list = filteredEpisodes(slug);
+  const idx = list.findIndex(e => e.permalink === ep.permalink);
   div.innerHTML = `
     <div class="row1">
       ${img ? `<img src="${escapeAttr(img)}" alt="" />` : ""}
@@ -1182,29 +1279,49 @@ function renderEpSelected() {
         </div>
       </div>
     </div>
-    <div class="actions">
-      <button class="primary" id="playBtn">▶ Play</button>
-      <button class="star ${fav ? "on" : ""}" id="epStarBtn">${fav ? "★ Starred" : "☆ Star"}</button>
-      <button id="prevBtn">‹ Prev</button>
-      <button id="nextBtn">Next ›</button>
+    <div class="player" dir="ltr">
+      <input type="range" class="seek" id="seekBar" min="0" max="0" step="1" value="0" aria-label="Position" />
+      <div class="times"><span id="timeNow">0:00</span><span id="timeTotal">--:--</span></div>
+      <div class="controls">
+        <button type="button" class="ctl" id="prevBtn" aria-label="Previous episode" ${idx > 0 ? "" : "disabled"}>${ICONS.prev}</button>
+        <button type="button" class="ctl" id="backBtn" aria-label="Back ${SKIP_BACK_S} seconds">${ICONS.back}</button>
+        <button type="button" class="ctl play" id="playBtn" aria-label="Play">${ICONS.play}</button>
+        <button type="button" class="ctl" id="fwdBtn" aria-label="Forward ${SKIP_FORWARD_S} seconds">${ICONS.fwd}</button>
+        <button type="button" class="ctl" id="nextBtn" aria-label="Next episode" ${idx >= 0 && idx < list.length - 1 ? "" : "disabled"}>${ICONS.next}</button>
+      </div>
     </div>
-    <div id="audioMount"></div>
+    <div class="actions">
+      <button class="star ${fav ? "on" : ""}" id="epStarBtn">${fav ? "★ Starred" : "☆ Star"}</button>
+    </div>
     ${ep.tracks?.length ? `
       <details class="tracks" ${ep.tracks.length <= 30 ? "open" : ""}>
         <summary>Track listing (${ep.tracks.length})</summary>
         <ol>${ep.tracks.map(t => `<li>${escapeHtml(t)}</li>`).join("")}</ol>
       </details>` : ""}
   `;
-  div.querySelector("#playBtn").addEventListener("click", () => playEpisode(ep, showMeta));
-  div.querySelector("#epStarBtn").addEventListener("click", () => toggleFavEpisode(ep));
+  div.querySelector("#playBtn").addEventListener("click", () => {
+    if (playingPermalink !== ep.permalink) playEpisode(ep, showMeta);
+    else if (audioEl.paused) audioEl.play();
+    else audioEl.pause();
+  });
+  div.querySelector("#backBtn").addEventListener("click", () => seekBy(-SKIP_BACK_S));
+  div.querySelector("#fwdBtn").addEventListener("click", () => seekBy(SKIP_FORWARD_S));
   div.querySelector("#prevBtn").addEventListener("click", () => stepEpisode(-1));
   div.querySelector("#nextBtn").addEventListener("click", () => stepEpisode(+1));
+  const seek = div.querySelector("#seekBar");
+  // While dragging only the time label moves; the jump happens on release.
+  seek.addEventListener("input", () => { seekDragging = true; updatePlayer(); });
+  seek.addEventListener("change", () => {
+    seekDragging = false;
+    if (audioEl && playingPermalink === ep.permalink) audioEl.currentTime = Number(seek.value);
+    updatePlayer();
+  });
+  div.querySelector("#epStarBtn").addEventListener("click", () => toggleFavEpisode(ep));
   div.querySelector("#jumpToShowLink")?.addEventListener("click", e => {
     e.preventDefault();
     selectShow(epSlug, { keepEpisode: true });
   });
-  ensureAudio();
-  div.querySelector("#audioMount").appendChild(audioEl);
+  updatePlayer();
 }
 
 // =========================================================================
@@ -1311,6 +1428,7 @@ function resetSelections() {
     audioEl.removeAttribute("src");
     audioEl.load();
   }
+  playingPermalink = null;
   if ("mediaSession" in navigator) navigator.mediaSession.metadata = null;
   $("showInput").value = "";
   $("epInput").value = "";
